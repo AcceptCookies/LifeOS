@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="sk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LifeOS</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: #1a1a1a; color: #e0e0e0; font-family: 'Inter', system-ui, sans-serif; }
+      input[type="checkbox"] { cursor: pointer; }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 99px; }
+      ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+      * { scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

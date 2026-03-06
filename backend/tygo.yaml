@@ -1,0 +1,22 @@
+packages:
+  - path: "lifeos/pantry"
+    output_path: "../frontend/src/types.d.ts"
+    type_mappings:
+      "int64": "number"
+      "float64": "number"
+
+  - path: "lifeos/recipes"
+    output_path: "../frontend/src/types.d.ts"
+    type_mappings:
+      "int64": "number"
+
+  - path: "lifeos/workout"
+    output_path: "../frontend/src/types.d.ts"
+    type_mappings:
+      "int64": "number"
+      "float64": "number"
+
+  - path: "lifeos/habits"
+    output_path: "../frontend/src/types.d.ts"
+    type_mappings:
+      "int64": "number"
