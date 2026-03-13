@@ -15,6 +15,9 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+// Migrations is exported so testdb helper can run them against a test database.
+var Migrations = &migrations
+
 func Open() (*sql.DB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
