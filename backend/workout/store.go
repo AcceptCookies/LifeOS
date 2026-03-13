@@ -406,6 +406,67 @@ func (s *Store) GetNotesByDate(userID int64, date string) (string, error) {
 
 // ── Stats ──────────────────────────────────────────────────────────────────
 
+// UpsertMuscle inserts a muscle group if one with the same name doesn't already exist for the user.
+func (s *Store) UpsertMuscle(userID int64, name string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO workout_muscle_groups (user_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		userID, name,
+	)
+	return err
+}
+
+// UpsertExercise looks up a muscle group by name and inserts an exercise if it doesn't already exist.
+// Returns true if the muscle group was found (regardless of whether the exercise was new).
+func (s *Store) UpsertExercise(userID int64, muscleName, exerciseName string) (bool, error) {
+	var groupID int64
+	err := s.db.QueryRow(
+		`SELECT id FROM workout_muscle_groups WHERE user_id = $1 AND name = $2`,
+		userID, muscleName,
+	).Scan(&groupID)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO workout_exercises (user_id, muscle_group_id, name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		userID, groupID, exerciseName,
+	)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// FindMuscleID returns the ID of a muscle group by name for the given user.
+// Returns 0, nil if not found.
+func (s *Store) FindMuscleID(userID int64, name string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT id FROM workout_muscle_groups WHERE user_id = $1 AND name = $2`,
+		userID, name,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
+// FindExerciseID returns the ID of an exercise by name for the given user.
+// Returns 0, nil if not found.
+func (s *Store) FindExerciseID(userID int64, name string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT id FROM workout_exercises WHERE user_id = $1 AND name = $2 LIMIT 1`,
+		userID, name,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
 func (s *Store) GetStats(userID int64) (*Stats, error) {
 	stats := &Stats{
 		WeeklySessions: []WeekStat{},

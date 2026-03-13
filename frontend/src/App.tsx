@@ -5,7 +5,14 @@ import PantryPage from "./PantryPage";
 import WorkoutPage from "./WorkoutPage";
 
 // Each habit: key matches backend JSON field, label in Slovak, color for dots/streaks
-const HABITS = [
+interface Habit {
+  key: string;
+  label: string;
+  color: string;
+  negative?: boolean;
+}
+
+const HABITS: Habit[] = [
   { key: "strength_training", label: "Silový tréning", color: "#ef4444" },
   { key: "cardio",            label: "Kardio",          color: "#f97316" },
   { key: "walking",           label: "Chôdza",          color: "#22c55e" },
@@ -16,7 +23,19 @@ const HABITS = [
   { key: "cheat_food",        label: "Cheat jedlo",     color: "#6b7280", negative: true },
 ];
 
-const EMPTY_FORM = {
+interface HabitForm {
+  strength_training: boolean;
+  cardio: boolean;
+  walking: boolean;
+  running: boolean;
+  stretching: boolean;
+  meditation: boolean;
+  learning: boolean;
+  cheat_food: boolean;
+  notes: string;
+}
+
+const EMPTY_FORM: HabitForm = {
   strength_training: false,
   cardio: false,
   walking: false,
@@ -32,25 +51,30 @@ const DOW = ["Po", "Ut", "St", "Št", "Pi", "So", "Ne"];
 const MONTHS_SK = ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec"];
 const DAYS_SK = ["Nedeľa", "Pondelok", "Utorok", "Streda", "Štvrtok", "Piatok", "Sobota"];
 
-function todayStr() {
+function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function formatDateSK(dateStr) {
+function formatDateSK(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
   return `${DAYS_SK[d.getDay()]}, ${d.getDate()}. ${MONTHS_SK[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function apiFormFromResponse(data) {
+function apiFormFromResponse(data: any): HabitForm {
   const f = { ...EMPTY_FORM };
-  for (const h of HABITS) f[h.key] = !!data[h.key];
+  for (const h of HABITS) f[h.key as keyof HabitForm] = !!data[h.key] as any;
   f.notes = data.notes || "";
   return f;
 }
 
 const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 
-const I = ({ d, children, ...props }) => (
+interface IconProps extends React.SVGProps<SVGSVGElement> {
+  d?: string;
+  children?: React.ReactNode;
+}
+
+const I = ({ d, children, ...props }: IconProps): JSX.Element => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
     {...props}>
@@ -58,7 +82,15 @@ const I = ({ d, children, ...props }) => (
   </svg>
 );
 
-const TABS = [
+type TabKey = "habits" | "workout" | "pantry" | "shop" | "recipes";
+
+interface Tab {
+  key: TabKey;
+  label: string;
+  icon: JSX.Element;
+}
+
+const TABS: Tab[] = [
   {
     key: "habits", label: "Návyky",
     icon: <I><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></I>,
@@ -81,7 +113,7 @@ const TABS = [
   },
 ];
 
-function useIsMobile() {
+function useIsMobile(): boolean {
   const [mobile, setMobile] = useState(() => window.innerWidth < 768);
   useEffect(() => {
     const fn = () => setMobile(window.innerWidth < 768);
@@ -91,21 +123,21 @@ function useIsMobile() {
   return mobile;
 }
 
-export default function App() {
+export default function App(): JSX.Element {
   const [authed, setAuthed] = useState(!!token.get());
-  const [activePage, setActivePage] = useState("habits");
+  const [activePage, setActivePage] = useState<TabKey>("habits");
   const isMobile = useIsMobile();
 
   if (!authed) {
     return <AuthPage onAuth={() => setAuthed(true)} />;
   }
 
-  function handleLogout() {
+  function handleLogout(): void {
     token.clear();
     setAuthed(false);
   }
 
-  function navigate(key) {
+  function navigate(key: TabKey): void {
     setActivePage(key);
   }
 
@@ -166,7 +198,7 @@ export default function App() {
   );
 }
 
-const NAV = {
+const NAV: Record<string, React.CSSProperties> = {
   root: {
     background: "#0f0f0f",
     minHeight: "100vh",
@@ -270,26 +302,38 @@ const NAV = {
   },
 };
 
-function DayModal({ date, onClose }) {
-  const [data, setData] = useState(null);
+interface DayData {
+  habits?: Record<string, any>;
+  muscles?: string[];
+  workout_notes?: string;
+  cooked_recipes?: string[];
+}
+
+interface DayModalProps {
+  date: string;
+  onClose: () => void;
+}
+
+function DayModal({ date, onClose }: DayModalProps): JSX.Element {
+  const [data, setData] = useState<DayData | null>(null);
   const [loading, setLoading] = useState(true);
-  const overlayRef = useRef(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.day.get(date).then(r => r.json()).then(d => {
+    api.day.get(date).then(r => r!.json()).then((d: DayData) => {
       setData(d);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [date]);
 
-  function handleOverlayClick(e) {
+  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>): void {
     if (e.target === overlayRef.current) onClose();
   }
 
   const habits = data?.habits;
   const doneHabits = habits ? HABITS.filter(h => habits[h.key]) : [];
-  const hasWorkout = data?.muscles?.length > 0;
-  const hasRecipes = data?.cooked_recipes?.length > 0;
+  const hasWorkout = (data?.muscles?.length ?? 0) > 0;
+  const hasRecipes = (data?.cooked_recipes?.length ?? 0) > 0;
   const hasNotes = habits?.notes || data?.workout_notes;
   const isEmpty = !loading && doneHabits.length === 0 && !hasWorkout && !hasRecipes && !hasNotes;
 
@@ -328,12 +372,12 @@ function DayModal({ date, onClose }) {
           <div style={DM.section}>
             <div style={DM.sectionTitle}>Tréning</div>
             <div style={DM.muscleList}>
-              {data.muscles.map((m, i) => (
+              {data!.muscles!.map((m, i) => (
                 <span key={i} style={DM.muscleChip}>{m}</span>
               ))}
             </div>
-            {data.workout_notes && (
-              <div style={DM.notesText}>{data.workout_notes}</div>
+            {data!.workout_notes && (
+              <div style={DM.notesText}>{data!.workout_notes}</div>
             )}
           </div>
         )}
@@ -342,7 +386,7 @@ function DayModal({ date, onClose }) {
           <div style={DM.section}>
             <div style={DM.sectionTitle}>Jedlo</div>
             <div style={DM.recipeList}>
-              {data.cooked_recipes.map((r, i) => (
+              {data!.cooked_recipes!.map((r, i) => (
                 <span key={i} style={DM.recipeChip}>{r}</span>
               ))}
             </div>
@@ -360,7 +404,7 @@ function DayModal({ date, onClose }) {
   );
 }
 
-const DM = {
+const DM: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed",
     inset: 0,
@@ -469,14 +513,22 @@ const DM = {
   },
 };
 
-function HabitTracker({ onLogout }) {
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [history, setHistory] = useState([]);
-  const [streaks, setStreaks] = useState({});
+interface HabitTrackerProps {
+  onLogout: () => void;
+}
+
+interface HistoryEntry extends Record<string, any> {
+  date: string;
+}
+
+function HabitTracker({ onLogout }: HabitTrackerProps): JSX.Element {
+  const [form, setForm] = useState<HabitForm>(EMPTY_FORM);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [streaks, setStreaks] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "ok" | "err">("idle");
   const [loading, setLoading] = useState(true);
-  const [selectedDay, setSelectedDay] = useState(null);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -486,9 +538,9 @@ function HabitTracker({ onLogout }) {
         api.get("/api/streaks"),
       ]);
       const [todayData, histData, streakData] = await Promise.all([
-        todayRes.json(),
-        histRes.json(),
-        streakRes.json(),
+        todayRes!.json(),
+        histRes!.json(),
+        streakRes!.json(),
       ]);
       setForm(apiFormFromResponse(todayData));
       setHistory(Array.isArray(histData) ? histData : []);
@@ -502,12 +554,12 @@ function HabitTracker({ onLogout }) {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  async function save() {
+  async function save(): Promise<void> {
     setSaving(true);
     setSaveState("saving");
     try {
-      const body = { ...EMPTY_FORM };
-      for (const h of HABITS) body[h.key] = !!form[h.key];
+      const body: Record<string, any> = { ...EMPTY_FORM };
+      for (const h of HABITS) body[h.key] = !!form[h.key as keyof HabitForm];
       body.notes = form.notes || "";
 
       await api.post("/api/today", body);
@@ -517,8 +569,8 @@ function HabitTracker({ onLogout }) {
         api.get("/api/streaks"),
       ]);
       const [histData, streakData] = await Promise.all([
-        histRes.json(),
-        streakRes.json(),
+        histRes!.json(),
+        streakRes!.json(),
       ]);
       setHistory(Array.isArray(histData) ? histData : []);
       setStreaks(streakData || {});
@@ -533,7 +585,7 @@ function HabitTracker({ onLogout }) {
     }
   }
 
-  const last30 = [];
+  const last30: string[] = [];
   const now = new Date();
   for (let i = 29; i >= 0; i--) {
     const d = new Date(now);
@@ -541,12 +593,12 @@ function HabitTracker({ onLogout }) {
     last30.push(d.toISOString().slice(0, 10));
   }
 
-  const histMap = {};
+  const histMap: Record<string, HistoryEntry> = {};
   for (const h of history) histMap[h.date] = h;
 
   const firstDate = new Date(last30[0] + "T12:00:00");
   const firstDow = (firstDate.getDay() + 6) % 7;
-  const calCells = [...Array(firstDow).fill(null), ...last30];
+  const calCells: (string | null)[] = [...Array(firstDow).fill(null), ...last30];
 
   if (loading) {
     return (
@@ -557,7 +609,10 @@ function HabitTracker({ onLogout }) {
   }
 
   const today = todayStr();
-  const doneCount = HABITS.filter((h) => !h.negative && form[h.key]).length;
+  const doneCount = HABITS.filter((h) => !h.negative && form[h.key as keyof HabitForm]).length;
+
+  // suppress unused warning — onLogout is kept for potential future use
+  void onLogout;
 
   return (
     <div style={S.page}>
@@ -578,7 +633,7 @@ function HabitTracker({ onLogout }) {
         {/* ── Habit checkboxes ── */}
         <div style={S.card}>
           {HABITS.map(({ key, label, color, negative }) => {
-            const checked = !!form[key];
+            const checked = !!form[key as keyof HabitForm];
             return (
               <label key={key} style={S.habitRow}>
                 <input
@@ -697,7 +752,7 @@ function HabitTracker({ onLogout }) {
 }
 
 /* ── Styles ── */
-const S = {
+const S: Record<string, React.CSSProperties> = {
   page: {
     background: "#0f0f0f",
     fontFamily: "'Inter', system-ui, sans-serif",

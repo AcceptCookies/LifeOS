@@ -1,14 +1,17 @@
 import { useState, useRef } from "react";
 import { api } from "./api";
+import type { Blueprint } from "./importBlueprints";
 
 const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 
-function parseCSV(text) {
+type ImportStep = "prompt" | "preview" | "importing" | "done" | "error";
+
+function parseCSV(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
   const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
   return lines.slice(1).map((line) => {
-    const values = [];
+    const values: string[] = [];
     let current = "";
     let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
@@ -22,20 +25,26 @@ function parseCSV(text) {
       }
     }
     values.push(current.trim());
-    const row = {};
+    const row: Record<string, string> = {};
     headers.forEach((h, i) => { row[h] = values[i] ?? ""; });
     return row;
   });
 }
 
-export default function ImportModal({ blueprint, onClose, onSuccess }) {
-  const [step, setStep] = useState("prompt"); // prompt | preview | importing | done | error
-  const [rows, setRows] = useState([]);
+interface ImportModalProps {
+  blueprint: Blueprint;
+  onClose: () => void;
+  onSuccess?: () => void;
+}
+
+export default function ImportModal({ blueprint, onClose, onSuccess }: ImportModalProps): JSX.Element {
+  const [step, setStep] = useState<ImportStep>("prompt");
+  const [rows, setRows] = useState<Record<string, string>[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [copied, setCopied] = useState(false);
-  const fileRef = useRef();
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  function downloadTemplate() {
+  function downloadTemplate(): void {
     const headers = blueprint.columns.map((c) => c.key).join(",");
     const examples = blueprint.exampleRows
       .map((row) => blueprint.columns.map((c) => row[c.key] ?? "").join(","))
@@ -50,19 +59,19 @@ export default function ImportModal({ blueprint, onClose, onSuccess }) {
     URL.revokeObjectURL(url);
   }
 
-  function copyPrompt() {
+  function copyPrompt(): void {
     navigator.clipboard.writeText(blueprint.botPrompt).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   }
 
-  function handleFile(e) {
-    const file = e.target.files[0];
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const parsed = parseCSV(ev.target.result);
+      const parsed = parseCSV(ev.target?.result as string);
       if (parsed.length === 0) {
         setErrorMsg("CSV je prazdne alebo ma nespravny format.");
         setStep("error");
@@ -75,7 +84,7 @@ export default function ImportModal({ blueprint, onClose, onSuccess }) {
     e.target.value = "";
   }
 
-  async function doImport() {
+  async function doImport(): Promise<void> {
     setStep("importing");
     try {
       const res = await api.post(blueprint.apiEndpoint, rows);
@@ -86,7 +95,7 @@ export default function ImportModal({ blueprint, onClose, onSuccess }) {
       setStep("done");
       setTimeout(() => { onSuccess?.(); onClose(); }, 1200);
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg((err as Error).message);
       setStep("error");
     }
   }
@@ -135,7 +144,7 @@ export default function ImportModal({ blueprint, onClose, onSuccess }) {
               style={{ display: "none" }}
               onChange={handleFile}
             />
-            <button style={M.uploadBtn} onClick={() => fileRef.current.click()}>
+            <button style={M.uploadBtn} onClick={() => fileRef.current?.click()}>
               Vybrat subor...
             </button>
           </>
@@ -205,7 +214,7 @@ export default function ImportModal({ blueprint, onClose, onSuccess }) {
   );
 }
 
-const M = {
+const M: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed",
     inset: 0,

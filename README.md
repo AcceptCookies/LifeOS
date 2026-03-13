@@ -73,6 +73,11 @@ Osobná life management platforma. Sledovanie návykov, tréningov, jedálnička
 - [ ] VPS (Hetzner) + HTTPS (Let's Encrypt)
 - [ ] CI/CD pipeline
 
+### Pred deployom – povinné
+- [ ] Nastaviť `JWT_SECRET` v Railway (inak sa tokeny invalidujú pri každom reštarte)
+- [ ] Nastaviť `CORS_ORIGIN` v Railway na URL Cloudflare Pages (napr. `https://lifeos.pages.dev`)
+- [ ] Nastaviť `VITE_API_URL` v Cloudflare Pages na URL Railway backendu
+
 ---
 
 ## Architektúra

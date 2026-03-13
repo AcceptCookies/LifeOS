@@ -2,44 +2,94 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
 import ImportModal from "./ImportModal";
 import { BLUEPRINTS } from "./importBlueprints";
+import type { Blueprint } from "./importBlueprints";
 
 const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 const MONTHS_SK = ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec"];
 const DAYS_SK = ["Pondelok", "Utorok", "Streda", "Štvrtok", "Piatok", "Sobota", "Nedeľa"];
 const DAYS_SHORT = ["Po", "Ut", "St", "Št", "Pi", "So", "Ne"];
 
-function todayStr() {
+function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function formatDate(dateStr) {
+function formatDate(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
   return `${d.getDate()}. ${MONTHS_SK[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 // 0=Monday ... 6=Sunday (ISO week)
-function todayDow() {
+function todayDow(): number {
   return (new Date().getDay() + 6) % 7;
 }
 
-export default function WorkoutPage() {
-  const [muscles, setMuscles] = useState([]);
-  const [sessions, setSessions] = useState([]);
-  const [schedule, setSchedule] = useState({});
-  const [stats, setStats] = useState(null);
+interface Exercise {
+  id: number;
+  name: string;
+}
+
+interface MuscleGroup {
+  id: number;
+  name: string;
+  exercises: Exercise[];
+}
+
+interface SessionExercise {
+  exercise_id: number;
+  sets?: number;
+  reps?: number;
+  weight?: number;
+}
+
+interface WorkoutSession {
+  id: number;
+  date: string;
+  muscle_ids: number[];
+  exercises: SessionExercise[];
+  notes?: string;
+}
+
+interface WeeklySession {
+  week_start: string;
+  count: number;
+}
+
+interface MuscleFreq {
+  muscle_id: number;
+  count: number;
+}
+
+interface WorkoutStats {
+  weekly_sessions: WeeklySession[];
+  muscle_freq: MuscleFreq[];
+}
+
+type Schedule = Record<number, number[]>;
+
+interface ExerciseInputValue {
+  sets: string;
+  reps: string;
+  weight: string;
+}
+
+export default function WorkoutPage(): JSX.Element {
+  const [muscles, setMuscles] = useState<MuscleGroup[]>([]);
+  const [sessions, setSessions] = useState<WorkoutSession[]>([]);
+  const [schedule, setSchedule] = useState<Schedule>({});
+  const [stats, setStats] = useState<WorkoutStats | null>(null);
   const [tab, setTab] = useState("log");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   // Log tab form state
-  const [todayMuscles, setTodayMuscles] = useState(new Set());
-  const [todayExercises, setTodayExercises] = useState({});
+  const [todayMuscles, setTodayMuscles] = useState<Set<number>>(new Set());
+  const [todayExercises, setTodayExercises] = useState<Record<number, ExerciseInputValue>>({});
   const [todayNotes, setTodayNotes] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
-  const [toast, setToast] = useState(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "ok" | "err">("idle");
+  const [toast, setToast] = useState<string | null>(null);
 
-  function showToast(msg) {
+  function showToast(msg: string): void {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   }
@@ -54,7 +104,7 @@ export default function WorkoutPage() {
         api.workout.stats.get(),
       ]);
       const [m, s, sch, st] = await Promise.all([
-        mRes.json(), sRes.json(), schRes.json(), stRes.json(),
+        mRes!.json(), sRes!.json(), schRes!.json(), stRes!.json(),
       ]);
       setMuscles(m);
       setSessions(s);
@@ -63,11 +113,11 @@ export default function WorkoutPage() {
 
       // Init today's form from saved session
       const today = todayStr();
-      const todaySess = s.find((sess) => sess.date === today);
+      const todaySess: WorkoutSession | undefined = s.find((sess: WorkoutSession) => sess.date === today);
       if (todaySess) {
         setTodayMuscles(new Set(todaySess.muscle_ids));
         setTodayNotes(todaySess.notes || "");
-        const exMap = {};
+        const exMap: Record<number, ExerciseInputValue> = {};
         for (const ex of todaySess.exercises) {
           exMap[ex.exercise_id] = {
             sets: ex.sets ?? "",
@@ -86,18 +136,18 @@ export default function WorkoutPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function saveToday() {
+  async function saveToday(): Promise<void> {
     setSaving(true);
     setSaveState("saving");
     try {
       // Build exercises array from checked muscles only
-      const checkedExercises = [];
+      const checkedExercises: SessionExercise[] = [];
       for (const muscle of muscles) {
         if (!todayMuscles.has(muscle.id)) continue;
         for (const ex of muscle.exercises) {
           const val = todayExercises[ex.id];
           if (!val) continue;
-          const entry = { exercise_id: ex.id };
+          const entry: SessionExercise = { exercise_id: ex.id };
           const setsN = parseInt(val.sets);
           const repsN = parseInt(val.reps);
           const weightN = parseFloat(val.weight);
@@ -123,7 +173,7 @@ export default function WorkoutPage() {
     }
   }
 
-  function toggleMuscle(id) {
+  function toggleMuscle(id: number): void {
     setTodayMuscles((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -132,14 +182,14 @@ export default function WorkoutPage() {
     });
   }
 
-  function setExField(exerciseId, field, value) {
+  function setExField(exerciseId: number, field: keyof ExerciseInputValue, value: string): void {
     setTodayExercises((prev) => ({
       ...prev,
       [exerciseId]: { ...(prev[exerciseId] || {}), [field]: value },
     }));
   }
 
-  const muscleMap = Object.fromEntries(muscles.map((m) => [m.id, m.name]));
+  const muscleMap: Record<number, string> = Object.fromEntries(muscles.map((m) => [m.id, m.name]));
 
   if (loading) {
     return <div style={S.centered}>Načítavam...</div>;
@@ -218,14 +268,31 @@ export default function WorkoutPage() {
 
 // ── Log tab ────────────────────────────────────────────────────────────────
 
-function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, todayNotes, setTodayNotes, toggleMuscle, setExField, saveToday, saving, saveState, muscleMap, onReload }) {
+interface LogTabProps {
+  muscles: MuscleGroup[];
+  sessions: WorkoutSession[];
+  schedule: Schedule;
+  todayMuscles: Set<number>;
+  todayExercises: Record<number, ExerciseInputValue>;
+  todayNotes: string;
+  setTodayNotes: (v: string) => void;
+  toggleMuscle: (id: number) => void;
+  setExField: (exerciseId: number, field: keyof ExerciseInputValue, value: string) => void;
+  saveToday: () => void;
+  saving: boolean;
+  saveState: "idle" | "saving" | "ok" | "err";
+  muscleMap: Record<number, string>;
+  onReload: () => void;
+}
+
+function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, todayNotes, setTodayNotes, toggleMuscle, setExField, saveToday, saving, saveState, muscleMap, onReload }: LogTabProps): JSX.Element {
   const today = todayStr();
   const dow = todayDow();
   const plannedToday = schedule[dow] || [];
   const muscleNamesPlanned = plannedToday.map((id) => muscleMap[id]).filter(Boolean);
-  const [importBlueprint, setImportBlueprint] = useState(null);
+  const [importBlueprint, setImportBlueprint] = useState<Blueprint | null>(null);
 
-  function applyPlan() {
+  function applyPlan(): void {
     plannedToday.forEach((id) => {
       if (!todayMuscles.has(id)) toggleMuscle(id);
     });
@@ -270,7 +337,7 @@ function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, tod
                 {checked && m.exercises.length > 0 && (
                   <div style={S.exInputBlock}>
                     {m.exercises.map((ex) => {
-                      const val = todayExercises[ex.id] || {};
+                      const val = todayExercises[ex.id] || {} as ExerciseInputValue;
                       return (
                         <div key={ex.id} style={S.exInputRow}>
                           <span style={S.exInputName}>{ex.name}</span>
@@ -368,7 +435,7 @@ function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, tod
               {sess.exercises && sess.exercises.length > 0 && (
                 <div style={S.histExercises}>
                   {sess.exercises.map((ex) => {
-                    const parts = [];
+                    const parts: string[] = [];
                     if (ex.sets) parts.push(`${ex.sets}×`);
                     if (ex.reps) parts.push(`${ex.reps}`);
                     if (ex.weight) parts.push(`${ex.weight}kg`);
@@ -391,11 +458,18 @@ function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, tod
 
 // ── Plan tab ───────────────────────────────────────────────────────────────
 
-function PlanTab({ muscles, schedule, setSchedule, onReload }) {
+interface PlanTabProps {
+  muscles: MuscleGroup[];
+  schedule: Schedule;
+  setSchedule: React.Dispatch<React.SetStateAction<Schedule>>;
+  onReload: () => void;
+}
+
+function PlanTab({ muscles, schedule, setSchedule, onReload: _onReload }: PlanTabProps): JSX.Element {
   const [selectedDay, setSelectedDay] = useState(todayDow());
   const [saving, setSaving] = useState(false);
 
-  async function toggleScheduleMuscle(muscleId) {
+  async function toggleScheduleMuscle(muscleId: number): Promise<void> {
     const current = schedule[selectedDay] || [];
     const next = current.includes(muscleId)
       ? current.filter((id) => id !== muscleId)
@@ -494,7 +568,12 @@ function PlanTab({ muscles, schedule, setSchedule, onReload }) {
 
 // ── Stats tab ──────────────────────────────────────────────────────────────
 
-function StatsTab({ stats, muscles }) {
+interface StatsTabProps {
+  stats: WorkoutStats | null;
+  muscles: MuscleGroup[];
+}
+
+function StatsTab({ stats, muscles }: StatsTabProps): JSX.Element {
   if (!stats) return <div style={S.empty}>Načítavam...</div>;
 
   const maxWeekly = Math.max(...(stats.weekly_sessions || []).map((w) => w.count), 1);
@@ -554,17 +633,28 @@ function StatsTab({ stats, muscles }) {
 
 // ── Manage tab ─────────────────────────────────────────────────────────────
 
-function ManageTab({ muscles, onReload, showToast }) {
-  const [expandedMuscle, setExpandedMuscle] = useState(null);
-  const [editingMuscle, setEditingMuscle] = useState(null);
+interface ManageTabProps {
+  muscles: MuscleGroup[];
+  onReload: () => void;
+  showToast: (msg: string) => void;
+}
+
+interface EditingItem {
+  id: number;
+  name: string;
+}
+
+function ManageTab({ muscles, onReload, showToast }: ManageTabProps): JSX.Element {
+  const [expandedMuscle, setExpandedMuscle] = useState<number | null>(null);
+  const [editingMuscle, setEditingMuscle] = useState<EditingItem | null>(null);
   const [newMuscle, setNewMuscle] = useState("");
   const [addingMuscle, setAddingMuscle] = useState(false);
-  const [editingExercise, setEditingExercise] = useState(null);
-  const [addingExerciseTo, setAddingExerciseTo] = useState(null);
+  const [editingExercise, setEditingExercise] = useState<EditingItem | null>(null);
+  const [addingExerciseTo, setAddingExerciseTo] = useState<number | null>(null);
   const [newExercise, setNewExercise] = useState("");
-  const [importBlueprint, setImportBlueprint] = useState(null);
+  const [importBlueprint, setImportBlueprint] = useState<Blueprint | null>(null);
 
-  async function addMuscle() {
+  async function addMuscle(): Promise<void> {
     if (!newMuscle.trim()) return;
     try {
       await api.workout.muscles.add(newMuscle.trim());
@@ -577,7 +667,7 @@ function ManageTab({ muscles, onReload, showToast }) {
     }
   }
 
-  async function saveMuscle() {
+  async function saveMuscle(): Promise<void> {
     if (!editingMuscle?.name.trim()) return;
     try {
       await api.workout.muscles.update(editingMuscle.id, editingMuscle.name.trim());
@@ -589,7 +679,7 @@ function ManageTab({ muscles, onReload, showToast }) {
     }
   }
 
-  async function deleteMuscle(id) {
+  async function deleteMuscle(id: number): Promise<void> {
     try {
       await api.workout.muscles.delete(id);
       if (expandedMuscle === id) setExpandedMuscle(null);
@@ -601,7 +691,7 @@ function ManageTab({ muscles, onReload, showToast }) {
     }
   }
 
-  async function addExercise(muscleGroupId) {
+  async function addExercise(muscleGroupId: number): Promise<void> {
     if (!newExercise.trim()) return;
     try {
       await api.workout.exercises.add(muscleGroupId, newExercise.trim());
@@ -614,7 +704,7 @@ function ManageTab({ muscles, onReload, showToast }) {
     }
   }
 
-  async function saveExercise() {
+  async function saveExercise(): Promise<void> {
     if (!editingExercise?.name.trim()) return;
     try {
       await api.workout.exercises.update(editingExercise.id, editingExercise.name.trim());
@@ -626,7 +716,7 @@ function ManageTab({ muscles, onReload, showToast }) {
     }
   }
 
-  async function deleteExercise(id) {
+  async function deleteExercise(id: number): Promise<void> {
     try {
       await api.workout.exercises.delete(id);
       await onReload();
@@ -667,9 +757,9 @@ function ManageTab({ muscles, onReload, showToast }) {
               {isEditingThis ? (
                 <input
                   style={{ ...S.inlineInput, flex: 1 }}
-                  value={editingMuscle.name}
+                  value={editingMuscle!.name}
                   autoFocus
-                  onChange={(e) => setEditingMuscle({ ...editingMuscle, name: e.target.value })}
+                  onChange={(e) => setEditingMuscle({ ...editingMuscle!, name: e.target.value })}
                   onKeyDown={(e) => { if (e.key === "Enter") saveMuscle(); if (e.key === "Escape") setEditingMuscle(null); }}
                 />
               ) : (
@@ -706,9 +796,9 @@ function ManageTab({ muscles, onReload, showToast }) {
                       {isEditingEx ? (
                         <input
                           style={{ ...S.inlineInput, flex: 1 }}
-                          value={editingExercise.name}
+                          value={editingExercise!.name}
                           autoFocus
-                          onChange={(e) => setEditingExercise({ ...editingExercise, name: e.target.value })}
+                          onChange={(e) => setEditingExercise({ ...editingExercise!, name: e.target.value })}
                           onKeyDown={(e) => { if (e.key === "Enter") saveExercise(); if (e.key === "Escape") setEditingExercise(null); }}
                         />
                       ) : (
@@ -785,7 +875,7 @@ function ManageTab({ muscles, onReload, showToast }) {
 
 // ── Styles ─────────────────────────────────────────────────────────────────
 
-const S = {
+const S: Record<string, React.CSSProperties> = {
   page: {
     background: "#0f0f0f",
     fontFamily: "'Inter', system-ui, sans-serif",

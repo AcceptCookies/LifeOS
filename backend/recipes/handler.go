@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"lifeos/auth"
+	"lifeos/respond"
 )
 
 type Handler struct {
@@ -32,11 +33,10 @@ func (h *Handler) ListRecipes(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	recipes, err := h.store.ListRecipes(userID)
 	if err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(recipes)
+	respond.JSON(w, recipes)
 }
 
 func (h *Handler) AddRecipe(w http.ResponseWriter, r *http.Request) {
@@ -45,28 +45,26 @@ func (h *Handler) AddRecipe(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	recipe, err := h.store.AddRecipe(userID, req.Name)
 	if err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(recipe)
+	respond.Created(w, recipe)
 }
 
 func (h *Handler) DeleteRecipe(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.DeleteRecipe(userID, id); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -75,7 +73,7 @@ func (h *Handler) DeleteRecipe(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AddIngredient(w http.ResponseWriter, r *http.Request) {
 	recipeID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -83,11 +81,11 @@ func (h *Handler) AddIngredient(w http.ResponseWriter, r *http.Request) {
 		Quantity     string `json:"quantity"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PantryItemID == 0 {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.AddIngredient(recipeID, req.PantryItemID, req.Quantity); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -96,18 +94,18 @@ func (h *Handler) AddIngredient(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateIngredient(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		Quantity string `json:"quantity"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.UpdateIngredientQuantity(id, req.Quantity); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -116,11 +114,11 @@ func (h *Handler) UpdateIngredient(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveIngredient(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.RemoveIngredient(id); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -130,11 +128,11 @@ func (h *Handler) LogCooking(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	recipeID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.LogCooking(userID, recipeID); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -144,18 +142,12 @@ func (h *Handler) UndoCooking(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	recipeID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.UndoCooking(userID, recipeID); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func jsonErr(w http.ResponseWriter, msg string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

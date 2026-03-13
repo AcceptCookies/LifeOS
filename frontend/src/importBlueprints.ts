@@ -1,7 +1,22 @@
 // Single source of truth for all CSV import blueprints.
 // Used by ImportModal to generate bot prompts, CSV templates, and API calls.
 
-export const BLUEPRINTS = {
+export interface BlueprintColumn {
+  key: string;
+  label: string;
+  required?: boolean;
+  description?: string;
+}
+
+export interface Blueprint {
+  label: string;
+  apiEndpoint: string;
+  columns: BlueprintColumn[];
+  exampleRows: Record<string, string>[];
+  botPrompt: string;
+}
+
+export const BLUEPRINTS: Record<string, Blueprint> = {
   muscles: {
     label: "Partie (Tréning)",
     apiEndpoint: "/api/import/muscles",

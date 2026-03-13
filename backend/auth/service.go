@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"log/slog"
 	"os"
 	"time"
 
@@ -25,7 +28,13 @@ type Service struct {
 func NewService(store *Store) *Service {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "dev-secret-change-in-production"
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("failed to generate JWT secret", "err", err)
+			os.Exit(1)
+		}
+		secret = base64.StdEncoding.EncodeToString(b)
+		slog.Warn("JWT_SECRET not set — using random secret, all tokens invalidated on restart")
 	}
 	return &Service{store: store, secret: []byte(secret)}
 }

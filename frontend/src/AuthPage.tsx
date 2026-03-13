@@ -5,8 +5,12 @@ const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 const SAVED_EMAIL_KEY = "lifeos_saved_email";
 const SAVED_PASSWORD_KEY = "lifeos_saved_password";
 
-export default function AuthPage({ onAuth }) {
-  const [mode, setMode] = useState("login"); // "login" | "register"
+interface AuthPageProps {
+  onAuth: () => void;
+}
+
+export default function AuthPage({ onAuth }: AuthPageProps): JSX.Element {
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
@@ -31,7 +35,7 @@ export default function AuthPage({ onAuth }) {
     }
   }, []);
 
-  async function submit(e) {
+  async function submit(e: React.FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -50,7 +54,7 @@ export default function AuthPage({ onAuth }) {
       }
       onAuth();
     } catch (err) {
-      setError(err.message);
+      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -122,7 +126,7 @@ export default function AuthPage({ onAuth }) {
   );
 }
 
-const S = {
+const S: Record<string, React.CSSProperties> = {
   page: {
     background: "#0f0f0f",
     minHeight: "100vh",

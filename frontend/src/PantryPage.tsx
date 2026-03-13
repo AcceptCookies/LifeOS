@@ -2,11 +2,61 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api, getMeta } from "./api";
 import ImportModal from "./ImportModal";
 import { BLUEPRINTS } from "./importBlueprints";
+import type { Blueprint } from "./importBlueprints";
 
 const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 
+const STORE_CAT_COLORS: Record<string, string> = {
+  "potraviny":  "#22c55e",
+  "pekáreň":   "#f59e0b",
+  "drogéria":  "#3b82f6",
+  "domácnosť": "#a78bfa",
+  "iné":       "#888888",
+};
+
+interface ShoppingItem {
+  id: number;
+  name: string;
+  quantity?: string;
+  store_category?: string;
+  pantry_item_id: number;
+  category?: string;
+}
+
+interface PantryItem {
+  id: number;
+  name: string;
+  category?: string;
+  tier?: string | null;
+}
+
+interface RecipeIngredient {
+  id: number;
+  pantry_item_id: number;
+  name: string;
+  category?: string;
+  quantity?: string;
+}
+
+interface Recipe {
+  id: number;
+  name: string;
+  last_cooked?: string | null;
+  ingredients: RecipeIngredient[];
+}
+
+function groupByStoreCategory(items: ShoppingItem[]): Record<string, ShoppingItem[]> {
+  const groups: Record<string, ShoppingItem[]> = {};
+  for (const item of items) {
+    const cat = item.store_category || "iné";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(item);
+  }
+  return groups;
+}
+
 // TIER_COLORS is UI-only – backend is source of truth for valid values (via /api/meta)
-const TIER_COLORS = {
+const TIER_COLORS: Record<string, string> = {
   "S+": "#f59e0b",
   "S":  "#fbbf24",
   "A":  "#22c55e",
@@ -15,19 +65,208 @@ const TIER_COLORS = {
   "D":  "#ef4444",
 };
 
-function nextTier(tiers, current) {
+function nextTier(tiers: string[], current: string | null | undefined): string | null {
   if (!current) return tiers[0] ?? "S+";
   const idx = tiers.indexOf(current);
   return idx === tiers.length - 1 ? null : tiers[idx + 1];
 }
 
-function EditItemModal({ item, tiers, categories, onSave, onClose }) {
+interface StickyNoteProps {
+  category: string;
+  items: ShoppingItem[];
+  onRemove: (id: number) => void;
+  onEdit: (item: ShoppingItem) => void;
+}
+
+function StickyNote({ category, items, onRemove, onEdit }: StickyNoteProps): JSX.Element {
+  const color = STORE_CAT_COLORS[category] || "#888";
+  return (
+    <div style={{ ...SN.note, borderLeftColor: color }}>
+      <div style={SN.header}>
+        <span style={{ ...SN.catLabel, color }}>{category.toUpperCase()}</span>
+        <span style={{ ...SN.catCount, color }}>{items.length}</span>
+      </div>
+      <div>
+        {items.map((item) => (
+          <div key={item.id} style={SN.item}>
+            <div style={SN.itemMain} onClick={() => onRemove(item.id)}>
+              <span style={SN.checkBox} />
+              <div style={SN.itemText}>
+                <span style={SN.itemName}>{item.name}</span>
+                {item.quantity && <span style={{ ...SN.qty, color }}>{item.quantity}</span>}
+              </div>
+            </div>
+            <button style={SN.editBtn} onClick={() => onEdit(item)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const SN: Record<string, React.CSSProperties> = {
+  note: {
+    background: "#1c1c1c",
+    border: "1px solid #2a2a2a",
+    borderLeft: "3px solid #22c55e",
+    borderRadius: 10,
+    marginBottom: 14,
+    overflow: "hidden",
+  },
+  header: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "10px 14px 8px",
+    borderBottom: "1px solid #222",
+  },
+  catLabel: {
+    fontSize: 10, fontWeight: 700, fontFamily: MONO, letterSpacing: "0.12em",
+  },
+  catCount: {
+    fontSize: 10, fontFamily: MONO, fontWeight: 600, opacity: 0.6,
+  },
+  item: {
+    display: "flex", alignItems: "center",
+    borderBottom: "1px solid #1e1e1e",
+  },
+  itemMain: {
+    display: "flex", alignItems: "center", gap: 10,
+    flex: 1, padding: "11px 14px", cursor: "pointer",
+  },
+  checkBox: {
+    width: 16, height: 16, flexShrink: 0,
+    border: "1.5px solid #333", borderRadius: 4,
+    background: "transparent", display: "inline-block",
+  },
+  itemText: { flex: 1, minWidth: 0 },
+  itemName: { fontSize: 14, color: "#d0d0d0", wordBreak: "break-word" },
+  qty: {
+    fontSize: 11, fontFamily: MONO, fontWeight: 600,
+    marginLeft: 8,
+  },
+  editBtn: {
+    background: "none", border: "none", color: "#444",
+    padding: "11px 12px", cursor: "pointer", flexShrink: 0,
+    display: "flex", alignItems: "center",
+  },
+};
+
+interface AddShopModalProps {
+  storeCategories: string[];
+  onAdd: (name: string, quantity: string, storeCategory: string) => void;
+  onClose: () => void;
+}
+
+function AddShopModal({ storeCategories, onAdd, onClose }: AddShopModalProps): JSX.Element {
+  const [name, setName] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [storeCat, setStoreCat] = useState("potraviny");
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  function handleOverlay(e: React.MouseEvent<HTMLDivElement>): void { if (e.target === overlayRef.current) onClose(); }
+
+  return (
+    <div ref={overlayRef} onClick={handleOverlay} style={EM.overlay}>
+      <div style={EM.modal}>
+        <div style={EM.header}>
+          <span style={EM.title}>Pridať do nákupu</span>
+          <button style={EM.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        <div style={EM.field}>
+          <label style={EM.label}>Názov</label>
+          <input style={EM.input} value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && name.trim() && onAdd(name.trim(), quantity, storeCat)}
+            autoFocus placeholder="napr. Banán" />
+        </div>
+        <div style={EM.field}>
+          <label style={EM.label}>Množstvo</label>
+          <input style={EM.input} value={quantity} onChange={(e) => setQuantity(e.target.value)}
+            placeholder="napr. 2x, 1L..." />
+        </div>
+        <div style={EM.field}>
+          <label style={EM.label}>Kategória obchodu</label>
+          <select style={EM.input} value={storeCat} onChange={(e) => setStoreCat(e.target.value)}>
+            {storeCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <button style={EM.saveBtn} onClick={() => onAdd(name.trim(), quantity, storeCat)} disabled={!name.trim()}>
+          Pridať
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface EditShopModalProps {
+  item: ShoppingItem;
+  storeCategories: string[];
+  onSave: (id: number, storeCategory: string, quantity: string, name: string) => void;
+  onClose: () => void;
+}
+
+function EditShopModal({ item, storeCategories, onSave, onClose }: EditShopModalProps): JSX.Element {
+  const [name, setName] = useState(item.name);
+  const [quantity, setQuantity] = useState(item.quantity || "");
+  const [storeCat, setStoreCat] = useState(item.store_category || "potraviny");
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const isManual = item.pantry_item_id === 0;
+
+  function handleOverlay(e: React.MouseEvent<HTMLDivElement>): void { if (e.target === overlayRef.current) onClose(); }
+
+  return (
+    <div ref={overlayRef} onClick={handleOverlay} style={EM.overlay}>
+      <div style={EM.modal}>
+        <div style={EM.header}>
+          <span style={EM.title}>Upraviť položku</span>
+          <button style={EM.closeBtn} onClick={onClose}>✕</button>
+        </div>
+        {isManual ? (
+          <div style={EM.field}>
+            <label style={EM.label}>Názov</label>
+            <input style={EM.input} value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+        ) : (
+          <div style={EM.field}>
+            <label style={EM.label}>Názov</label>
+            <div style={{ ...EM.input, color: "#555" }}>{item.name}</div>
+          </div>
+        )}
+        <div style={EM.field}>
+          <label style={EM.label}>Množstvo</label>
+          <input style={EM.input} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        </div>
+        <div style={EM.field}>
+          <label style={EM.label}>Kategória obchodu</label>
+          <select style={EM.input} value={storeCat} onChange={(e) => setStoreCat(e.target.value)}>
+            {storeCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <button style={EM.saveBtn} onClick={() => onSave(item.id, storeCat, quantity, isManual ? name.trim() : item.name)}>
+          Uložiť
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface EditItemModalProps {
+  item: PantryItem;
+  tiers: string[];
+  categories: string[];
+  onSave: (id: number, name: string, category: string, tier: string) => void;
+  onClose: () => void;
+}
+
+function EditItemModal({ item, tiers, categories, onSave, onClose }: EditItemModalProps): JSX.Element {
   const [name, setName] = useState(item.name);
   const [category, setCategory] = useState(item.category || "");
   const [tier, setTier] = useState(item.tier || "");
-  const overlayRef = useRef(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
-  function handleOverlay(e) {
+  function handleOverlay(e: React.MouseEvent<HTMLDivElement>): void {
     if (e.target === overlayRef.current) onClose();
   }
 
@@ -94,7 +333,7 @@ function EditItemModal({ item, tiers, categories, onSave, onClose }) {
   );
 }
 
-const EM = {
+const EM: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
     zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center",
@@ -134,52 +373,54 @@ const EM = {
   },
 };
 
-function formatLastCooked(iso) {
+function formatLastCooked(iso: string | null | undefined): string {
   if (!iso) return "Nikdy uvarené";
   const d = new Date(iso);
-  const days = Math.floor((Date.now() - d) / 86400000);
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
   if (days === 0) return "Uvarené dnes";
   if (days === 1) return "Uvarené včera";
   if (days < 30) return `Pred ${days} dňami`;
   return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
 }
 
-function ShopRow({ item, onRemove }) {
-  return (
-    <div style={{ ...S.itemRow, cursor: "pointer" }} onClick={onRemove}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <span style={S.itemName}>{item.name}</span>
-        {item.quantity && <span style={S.quantityBadge}>{item.quantity}</span>}
-        {item.category && <span style={S.categoryTag}>{item.category}</span>}
-      </div>
-      <span style={S.checkHint} />
-    </div>
-  );
+type ActiveTab = "pantry" | "shop" | "recipes";
+
+interface PantryPageProps {
+  activeTab: ActiveTab;
+  onTabChange?: (tab: string) => void;
 }
 
-export default function PantryPage({ activeTab }) {
-  const [items, setItems] = useState([]);
-  const [shopping, setShopping] = useState([]);
-  const [recipes, setRecipes] = useState([]);
-  const [selectedRecipe, setSelectedRecipe] = useState(null);
+interface RecipeToast {
+  msg: string;
+  onUndo?: (() => void) | null;
+}
+
+export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element {
+  const [items, setItems] = useState<PantryItem[]>([]);
+  const [shopping, setShopping] = useState<ShoppingItem[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newTier, setNewTier] = useState("");
-  const [editItem, setEditItem] = useState(null);
+  const [editItem, setEditItem] = useState<PantryItem | null>(null);
   const [newRecipeName, setNewRecipeName] = useState("");
   const [addIngValue, setAddIngValue] = useState("");
   const [addIngQuantity, setAddIngQuantity] = useState("");
-  const [ingQuantities, setIngQuantities] = useState({});
+  const [ingQuantities, setIngQuantities] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
-  const [importBlueprint, setImportBlueprint] = useState(null);
-  const [tiers, setTiers] = useState(["S+", "S", "A", "B", "C", "D"]);
-  const [categories, setCategories] = useState([]);
-  const [deleteError, setDeleteError] = useState(null);
-  const [boughtMsg, setBoughtMsg] = useState(null);
-  const [addedToCartMsg, setAddedToCartMsg] = useState(null);
-  const [recipeToast, setRecipeToast] = useState(null); // { msg, onUndo? }
+  const [importBlueprint, setImportBlueprint] = useState<Blueprint | null>(null);
+  const [tiers, setTiers] = useState<string[]>(["S+", "S", "A", "B", "C", "D"]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [boughtMsg, setBoughtMsg] = useState<string | null>(null);
+  const [addedToCartMsg, setAddedToCartMsg] = useState<string | null>(null);
+  const [recipeToast, setRecipeToast] = useState<RecipeToast | null>(null);
+  const [storeCategories, setStoreCategories] = useState<string[]>(["potraviny", "pekáreň", "drogéria", "domácnosť", "iné"]);
+  const [addShopOpen, setAddShopOpen] = useState(false);
+  const [editShopItem, setEditShopItem] = useState<ShoppingItem | null>(null);
 
-  function showRecipeToast(msg, onUndo = null) {
+  function showRecipeToast(msg: string, onUndo: (() => void) | null = null): void {
     setRecipeToast({ msg, onUndo });
     if (!onUndo) setTimeout(() => setRecipeToast(null), 2500);
   }
@@ -193,15 +434,16 @@ export default function PantryPage({ activeTab }) {
         getMeta(),
       ]);
       const [pantryData, shopData, recipesData] = await Promise.all([
-        pantryRes.json(),
-        shopRes.json(),
-        recipesRes.json(),
+        pantryRes!.json(),
+        shopRes!.json(),
+        recipesRes!.json(),
       ]);
       setItems(Array.isArray(pantryData) ? pantryData : []);
       setShopping(Array.isArray(shopData) ? shopData : []);
       setRecipes(Array.isArray(recipesData) ? recipesData : []);
       if (Array.isArray(meta?.tiers)) setTiers(meta.tiers);
       if (Array.isArray(meta?.pantry_categories)) setCategories(meta.pantry_categories);
+      if (Array.isArray(meta?.store_categories)) setStoreCategories(meta.store_categories);
     } catch (e) {
       console.error("load error:", e);
     } finally {
@@ -229,7 +471,7 @@ export default function PantryPage({ activeTab }) {
     setSelectedRecipe(null);
   }, [activeTab]);
 
-  async function addItem() {
+  async function addItem(): Promise<void> {
     const name = newName.trim();
     if (!name) return;
     const res = await api.pantry.add(name, newCategory, newTier || null);
@@ -242,7 +484,7 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function saveEdit(id, name, category, tier) {
+  async function saveEdit(id: number, name: string, category: string, tier: string): Promise<void> {
     const res = await api.pantry.update(id, name, category, tier || null);
     if (res && (res.ok || res.status === 204)) {
       setItems((prev) => prev.map((i) =>
@@ -252,18 +494,38 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function addToShopping(pantryItem, quantity = "") {
+  async function addToShopping(pantryItem: Pick<PantryItem, "id" | "name">, quantity = ""): Promise<void> {
     const res = await api.shopping.add(pantryItem.id, quantity);
     if (res && (res.ok || res.status === 204)) {
       const shopRes = await api.shopping.list();
-      const shopData = await shopRes.json();
+      const shopData = await shopRes!.json();
       setShopping(Array.isArray(shopData) ? shopData : []);
       setAddedToCartMsg(pantryItem.name);
       setTimeout(() => setAddedToCartMsg(null), 2500);
     }
   }
 
-  async function removeFromShopping(id) {
+  async function addManualShoppingItem(name: string, quantity: string, storeCategory: string): Promise<void> {
+    const res = await api.shopping.addManual(name, quantity, storeCategory);
+    if (res && (res.ok || res.status === 204)) {
+      const shopRes = await api.shopping.list();
+      const shopData = await shopRes!.json();
+      setShopping(Array.isArray(shopData) ? shopData : []);
+      setAddShopOpen(false);
+    }
+  }
+
+  async function saveShopEdit(id: number, storeCategory: string, quantity: string, name: string): Promise<void> {
+    const res = await api.shopping.update(id, storeCategory, quantity, name);
+    if (res && (res.ok || res.status === 204)) {
+      setShopping((prev) => prev.map((s) =>
+        s.id === id ? { ...s, store_category: storeCategory, quantity, name: s.pantry_item_id === 0 ? name : s.name } : s
+      ));
+      setEditShopItem(null);
+    }
+  }
+
+  async function removeFromShopping(id: number): Promise<void> {
     const item = shopping.find((s) => s.id === id);
     const res = await api.shopping.remove(id);
     if (res && (res.ok || res.status === 204)) {
@@ -273,7 +535,7 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function deletePantryItem(id) {
+  async function deletePantryItem(id: number): Promise<void> {
     setDeleteError(null);
     const res = await api.pantry.delete(id);
     if (res && (res.ok || res.status === 204)) {
@@ -286,13 +548,13 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function cycleTier(item) {
-    const newTier = nextTier(tiers, item.tier);
-    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, tier: newTier } : i));
-    await api.pantry.updateTier(item.id, newTier);
+  async function cycleTier(item: PantryItem): Promise<void> {
+    const newTierVal = nextTier(tiers, item.tier);
+    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, tier: newTierVal } : i));
+    await api.pantry.updateTier(item.id, newTierVal);
   }
 
-  async function addRecipe() {
+  async function addRecipe(): Promise<void> {
     const name = newRecipeName.trim();
     if (!name) return;
     const res = await api.recipes.add(name);
@@ -304,7 +566,7 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function deleteRecipe(id) {
+  async function deleteRecipe(id: number): Promise<void> {
     const res = await api.recipes.delete(id);
     if (res && (res.ok || res.status === 204)) {
       setRecipes((prev) => prev.filter((r) => r.id !== id));
@@ -312,12 +574,12 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function addIngredient() {
+  async function addIngredient(): Promise<void> {
     if (!addIngValue || !selectedRecipe) return;
     const res = await api.recipes.addIngredient(selectedRecipe.id, Number(addIngValue), addIngQuantity.trim());
     if (res && (res.ok || res.status === 204)) {
       const recipesRes = await api.recipes.list();
-      const recipesData = await recipesRes.json();
+      const recipesData = await recipesRes!.json();
       setRecipes(Array.isArray(recipesData) ? recipesData : []);
       setAddIngValue("");
       setAddIngQuantity("");
@@ -325,15 +587,15 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function saveIngredientQuantity(id) {
+  async function saveIngredientQuantity(id: number): Promise<void> {
     const quantity = ingQuantities[id] ?? "";
     await api.recipes.updateIngredient(id, quantity);
     const recipesRes = await api.recipes.list();
-    const recipesData = await recipesRes.json();
+    const recipesData = await recipesRes!.json();
     setRecipes(Array.isArray(recipesData) ? recipesData : []);
   }
 
-  async function removeIngredient(ingredientId) {
+  async function removeIngredient(ingredientId: number): Promise<void> {
     const res = await api.recipes.removeIngredient(ingredientId);
     if (res && (res.ok || res.status === 204)) {
       setRecipes((prev) => prev.map((r) => ({
@@ -344,21 +606,24 @@ export default function PantryPage({ activeTab }) {
     }
   }
 
-  async function cookRecipe(recipeId) {
+  async function cookRecipe(recipeId: number): Promise<void> {
     const res = await api.recipes.cook(recipeId);
     if (res && (res.ok || res.status === 204)) {
       const recipesRes = await api.recipes.list();
-      const recipesData = await recipesRes.json();
+      const recipesData = await recipesRes!.json();
       setRecipes(Array.isArray(recipesData) ? recipesData : []);
       showRecipeToast("Uvarené dnes", async () => {
         setRecipeToast(null);
         await api.recipes.uncook(recipeId);
         const r2 = await api.recipes.list();
-        const d2 = await r2.json();
+        const d2 = await r2!.json();
         setRecipes(Array.isArray(d2) ? d2 : []);
       });
     }
   }
+
+  // suppress unused warning — cycleTier exposed for potential future use
+  void cycleTier;
 
   const shoppingIds = new Set(shopping.map((s) => s.pantry_item_id));
 
@@ -436,14 +701,20 @@ export default function PantryPage({ activeTab }) {
                       value={ingQuantities[ing.id] ?? ""}
                       onChange={(e) => setIngQuantities((prev) => ({ ...prev, [ing.id]: e.target.value }))}
                       onBlur={() => saveIngredientQuantity(ing.id)}
-                      onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                     />
                     <button
                       style={{ ...S.ingCartBtn, ...(inCart ? S.ingCartBtnDone : {}) }}
-                      onClick={() => !inCart && addToShopping({ id: ing.pantry_item_id, name: ing.name, category: ing.category }, ingQuantities[ing.id] ?? ing.quantity ?? "")}
+                      onClick={() => !inCart && addToShopping({ id: ing.pantry_item_id, name: ing.name }, ingQuantities[ing.id] ?? ing.quantity ?? "")}
                       disabled={inCart}
                     >
                       {inCart ? "✓ V košíku" : "+ Do košíka"}
+                    </button>
+                    <button
+                      style={S.ingRemoveBtn}
+                      onClick={() => removeIngredient(ing.id)}
+                    >
+                      ×
                     </button>
                   </div>
                 );
@@ -612,23 +883,43 @@ export default function PantryPage({ activeTab }) {
         )}
 
         {/* ── Nákup ── */}
-        {activeTab === "shop" && boughtMsg && (
-          <div style={S.boughtToast}>✓ {boughtMsg} zakúpené</div>
-        )}
         {activeTab === "shop" && (
-          shopping.length === 0 ? (
-            <div style={S.emptyState}>Nič nekupuješ</div>
-          ) : (
-            <div style={S.card}>
-              {shopping.map((item) => (
-                <ShopRow
-                  key={item.id}
-                  item={item}
-                  onRemove={() => removeFromShopping(item.id)}
-                />
-              ))}
-            </div>
-          )
+          <>
+            {boughtMsg && <div style={S.boughtToast}>✓ {boughtMsg} zakúpené</div>}
+            <button style={S.addShopBtn} onClick={() => setAddShopOpen(true)}>
+              + Pridať položku
+            </button>
+            {addShopOpen && (
+              <AddShopModal
+                storeCategories={storeCategories}
+                onAdd={addManualShoppingItem}
+                onClose={() => setAddShopOpen(false)}
+              />
+            )}
+            {editShopItem && (
+              <EditShopModal
+                item={editShopItem}
+                storeCategories={storeCategories}
+                onSave={saveShopEdit}
+                onClose={() => setEditShopItem(null)}
+              />
+            )}
+            {shopping.length === 0 ? (
+              <div style={S.emptyState}>Nič nekupuješ</div>
+            ) : (
+              <div>
+                {Object.entries(groupByStoreCategory(shopping)).map(([cat, catItems]) => (
+                  <StickyNote
+                    key={cat}
+                    category={cat}
+                    items={catItems}
+                    onRemove={removeFromShopping}
+                    onEdit={setEditShopItem}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* ── Recepty ── */}
@@ -692,7 +983,7 @@ export default function PantryPage({ activeTab }) {
   );
 }
 
-const S = {
+const S: Record<string, React.CSSProperties> = {
   page: {
     background: "#1a1a1a",
     fontFamily: "'Inter', system-ui, sans-serif",
@@ -929,6 +1220,19 @@ const S = {
   ingCartBtnDone: {
     background: "#1a1a1a", border: "1px solid #333", color: "#555", cursor: "default",
   },
+  ingRemoveBtn: {
+    background: "none", border: "1px solid #333", borderRadius: 5,
+    color: "#555", fontSize: 14, padding: "2px 8px", cursor: "pointer",
+    textAlign: "center",
+  },
+  addShopBtn: {
+    width: "100%", marginBottom: 14,
+    background: "transparent", border: "1px dashed #2a2a2a",
+    borderRadius: 8, color: "#444", fontSize: 13,
+    fontFamily: MONO, letterSpacing: "0.04em",
+    padding: "11px 0", cursor: "pointer",
+    transition: "border-color 0.15s, color 0.15s",
+  },
   importBtnSmall: {
     background: "none",
     border: "1px solid #2a2a2a",
@@ -944,11 +1248,6 @@ const S = {
   },
   addIngHint: { fontSize: 13, color: "#555", padding: "10px 0" },
   addIngRow: { display: "flex", gap: 8, flexWrap: "wrap" },
-  select: {
-    flex: "1 1 100px", minWidth: 0, background: "#1a1a1a",
-    border: "1px solid #444", borderRadius: 8, padding: "10px 12px",
-    color: "#e0e0e0", fontSize: 14, outline: "none",
-  },
   addIngBtn: {
     background: "#14532d", border: "1px solid #22c55e", borderRadius: 8,
     color: "#22c55e", fontSize: 14, padding: "10px 16px",

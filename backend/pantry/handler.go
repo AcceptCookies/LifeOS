@@ -8,11 +8,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"lifeos/auth"
+	"lifeos/respond"
 )
 
 // ValidTiers is the single source of truth for tier values.
 // Used in validation and exposed via GET /api/meta.
 var ValidTiers = []string{"S+", "S", "A", "B", "C", "D"}
+
+// StoreCategories is the single source of truth for shopping list store categories.
+var StoreCategories = []string{"potraviny", "pekáreň", "drogéria", "domácnosť", "iné"}
 
 // Categories is the single source of truth for pantry item categories.
 var Categories = []string{
@@ -54,7 +58,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/pantry/{id}", h.DeletePantryItem)
 	r.Patch("/api/pantry/{id}/tier", h.UpdateTier)
 	r.Get("/api/shopping", h.ListShopping)
+	r.Post("/api/shopping", h.AddManualShoppingItem)
 	r.Post("/api/shopping/{pantryItemId}", h.AddToShopping)
+	r.Patch("/api/shopping/{id}", h.UpdateShoppingItem)
 	r.Delete("/api/shopping/{id}", h.RemoveFromShopping)
 }
 
@@ -62,14 +68,13 @@ func (h *Handler) ListPantry(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	items, err := h.store.ListPantry(userID)
 	if err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	if items == nil {
 		items = []PantryItem{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	respond.JSON(w, items)
 }
 
 func (h *Handler) AddPantryItem(w http.ResponseWriter, r *http.Request) {
@@ -80,36 +85,25 @@ func (h *Handler) AddPantryItem(w http.ResponseWriter, r *http.Request) {
 		Tier     *string `json:"tier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if req.Tier != nil {
-		ok := false
-		for _, t := range ValidTiers {
-			if t == *req.Tier {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			req.Tier = nil
-		}
+	if req.Tier != nil && !isValidTier(*req.Tier) {
+		req.Tier = nil
 	}
 	item, err := h.store.AddPantryItem(userID, req.Name, req.Category, req.Tier)
 	if err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(item)
+	respond.Created(w, item)
 }
 
 func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -118,23 +112,14 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		Tier     *string `json:"tier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if req.Tier != nil {
-		ok := false
-		for _, t := range ValidTiers {
-			if t == *req.Tier {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			req.Tier = nil
-		}
+	if req.Tier != nil && !isValidTier(*req.Tier) {
+		req.Tier = nil
 	}
 	if err := h.store.UpdateItem(userID, id, req.Name, req.Category, req.Tier); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -144,32 +129,22 @@ func (h *Handler) UpdateTier(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		Tier *string `json:"tier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, "invalid request", http.StatusBadRequest)
+		respond.Err(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	// Validate tier value
-	if req.Tier != nil {
-		ok := false
-		for _, t := range ValidTiers {
-			if t == *req.Tier {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			jsonErr(w, "invalid tier", http.StatusBadRequest)
-			return
-		}
+	if req.Tier != nil && !isValidTier(*req.Tier) {
+		respond.Err(w, "invalid tier", http.StatusBadRequest)
+		return
 	}
 	if err := h.store.UpdateTier(userID, id, req.Tier); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -179,16 +154,16 @@ func (h *Handler) DeletePantryItem(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.DeletePantryItem(userID, id); err != nil {
 		if strings.Contains(err.Error(), "foreign key constraint") ||
 			strings.Contains(err.Error(), "violates foreign key") {
-			jsonErr(w, "Potravina sa používa v recepte a nedá sa vymazať", http.StatusConflict)
+			respond.Err(w, "Potravina sa používa v recepte a nedá sa vymazať", http.StatusConflict)
 			return
 		}
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -198,29 +173,75 @@ func (h *Handler) ListShopping(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	items, err := h.store.ListShopping(userID)
 	if err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	if items == nil {
 		items = []ShoppingItem{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	respond.JSON(w, items)
 }
 
 func (h *Handler) AddToShopping(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	pantryItemID, err := strconv.ParseInt(chi.URLParam(r, "pantryItemId"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		Quantity string `json:"quantity"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	if err := h.store.AddToShopping(userID, pantryItemID, req.Quantity); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+	if err := h.store.AddToShopping(userID, pantryItemID, req.Quantity, StoreCategories[0]); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) AddManualShoppingItem(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	var req struct {
+		Name          string `json:"name"`
+		Quantity      string `json:"quantity"`
+		StoreCategory string `json:"store_category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.StoreCategory == "" {
+		req.StoreCategory = StoreCategories[0]
+	}
+	if err := h.store.AddManualShoppingItem(userID, req.Name, req.Quantity, req.StoreCategory); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) UpdateShoppingItem(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		StoreCategory string `json:"store_category"`
+		Quantity      string `json:"quantity"`
+		Name          string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.StoreCategory == "" {
+		req.StoreCategory = StoreCategories[0]
+	}
+	if err := h.store.UpdateShoppingItem(userID, id, req.StoreCategory, req.Quantity, req.Name); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -230,18 +251,21 @@ func (h *Handler) RemoveFromShopping(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		jsonErr(w, "invalid id", http.StatusBadRequest)
+		respond.Err(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.RemoveFromShopping(userID, id); err != nil {
-		jsonErr(w, "db error", http.StatusInternalServerError)
+		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func jsonErr(w http.ResponseWriter, msg string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+func isValidTier(tier string) bool {
+	for _, t := range ValidTiers {
+		if t == tier {
+			return true
+		}
+	}
+	return false
 }

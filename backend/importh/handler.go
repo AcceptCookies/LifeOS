@@ -1,8 +1,8 @@
 package importh
 
 import (
-	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,14 +10,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"lifeos/auth"
 	"lifeos/pantry"
+	"lifeos/recipes"
+	"lifeos/respond"
+	"lifeos/workout"
 )
 
 type Handler struct {
-	db *sql.DB
+	pantryStore  *pantry.Store
+	workoutStore *workout.Store
+	recipesStore *recipes.Store
 }
 
-func NewHandler(db *sql.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(pantryStore *pantry.Store, workoutStore *workout.Store, recipesStore *recipes.Store) *Handler {
+	return &Handler{
+		pantryStore:  pantryStore,
+		workoutStore: workoutStore,
+		recipesStore: recipesStore,
+	}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -29,17 +38,6 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/import/recipes", h.ImportRecipes)
 }
 
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-func writeOK(w http.ResponseWriter, imported int) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"imported": imported})
-}
-
 // ── Muscles ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ImportMuscles(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +45,7 @@ func (h *Handler) ImportMuscles(w http.ResponseWriter, r *http.Request) {
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -57,15 +55,13 @@ func (h *Handler) ImportMuscles(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			continue
 		}
-		_, err := h.db.Exec(
-			`INSERT INTO workout_muscle_groups (user_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			userID, name,
-		)
-		if err == nil {
-			count++
+		if err := h.workoutStore.UpsertMuscle(userID, name); err != nil {
+			slog.Error("import muscles: upsert failed", "name", name, "err", err)
+			continue
 		}
+		count++
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }
 
 // ── Exercises ──────────────────────────────────────────────────────────────
@@ -75,12 +71,9 @@ func (h *Handler) ImportExercises(w http.ResponseWriter, r *http.Request) {
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	// Cache muscle group name -> id
-	muscleCache := map[string]int64{}
 
 	count := 0
 	for _, row := range rows {
@@ -90,48 +83,26 @@ func (h *Handler) ImportExercises(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Find muscle group id
-		groupID, ok := muscleCache[groupName]
-		if !ok {
-			err := h.db.QueryRow(
-				`SELECT id FROM workout_muscle_groups WHERE user_id = $1 AND name = $2`,
-				userID, groupName,
-			).Scan(&groupID)
-			if err != nil {
-				continue // skip unknown muscle group
-			}
-			muscleCache[groupName] = groupID
+		found, err := h.workoutStore.UpsertExercise(userID, groupName, exerciseName)
+		if err != nil {
+			slog.Error("import exercises: upsert failed", "exercise", exerciseName, "err", err)
+			continue
 		}
-
-		_, err := h.db.Exec(
-			`INSERT INTO workout_exercises (user_id, muscle_group_id, name)
-			 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-			userID, groupID, exerciseName,
-		)
-		if err == nil {
+		if found {
 			count++
 		}
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }
 
 // ── Sessions ───────────────────────────────────────────────────────────────
-
-type sessionRow struct {
-	muscleGroupNames []string
-	exerciseName     string
-	sets             *int
-	reps             *int
-	weight           *float64
-	notes            string
-}
 
 func (h *Handler) ImportSessions(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromCtx(r.Context())
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -142,13 +113,8 @@ func (h *Handler) ImportSessions(w http.ResponseWriter, r *http.Request) {
 	// Group rows by date
 	type sessionData struct {
 		muscleIDs []int64
-		exercises []struct {
-			id     int64
-			sets   *int
-			reps   *int
-			weight *float64
-		}
-		notes string
+		exercises []workout.SessionExercise
+		notes     string
 	}
 
 	byDate := map[string]*sessionData{}
@@ -175,14 +141,16 @@ func (h *Handler) ImportSessions(w http.ResponseWriter, r *http.Request) {
 				}
 				mgID, ok := muscleCache[mgName]
 				if !ok {
-					err := h.db.QueryRow(
-						`SELECT id FROM workout_muscle_groups WHERE user_id = $1 AND name = $2`,
-						userID, mgName,
-					).Scan(&mgID)
+					id, err := h.workoutStore.FindMuscleID(userID, mgName)
 					if err != nil {
+						slog.Error("import sessions: find muscle failed", "name", mgName, "err", err)
 						continue
 					}
-					muscleCache[mgName] = mgID
+					if id == 0 {
+						continue // unknown muscle group
+					}
+					muscleCache[mgName] = id
+					mgID = id
 				}
 				// Deduplicate
 				found := false
@@ -210,83 +178,43 @@ func (h *Handler) ImportSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		exID, ok := exerciseCache[exName]
 		if !ok {
-			err := h.db.QueryRow(
-				`SELECT id FROM workout_exercises WHERE user_id = $1 AND name = $2 LIMIT 1`,
-				userID, exName,
-			).Scan(&exID)
+			id, err := h.workoutStore.FindExerciseID(userID, exName)
 			if err != nil {
+				slog.Error("import sessions: find exercise failed", "name", exName, "err", err)
 				continue
 			}
-			exerciseCache[exName] = exID
+			if id == 0 {
+				continue // unknown exercise
+			}
+			exerciseCache[exName] = id
+			exID = id
 		}
 
-		ex := struct {
-			id     int64
-			sets   *int
-			reps   *int
-			weight *float64
-		}{id: exID}
-
+		se := workout.SessionExercise{ExerciseID: exID}
 		if v, err := strconv.Atoi(strings.TrimSpace(row["sets"])); err == nil {
-			ex.sets = &v
+			se.Sets = &v
 		}
 		if v, err := strconv.Atoi(strings.TrimSpace(row["reps"])); err == nil {
-			ex.reps = &v
+			se.Reps = &v
 		}
 		if v, err := strconv.ParseFloat(strings.TrimSpace(row["weight_kg"]), 64); err == nil {
-			ex.weight = &v
+			se.Weight = &v
 		}
 
-		sd.exercises = append(sd.exercises, ex)
+		sd.exercises = append(sd.exercises, se)
 	}
 
 	// Upsert each date
 	count := 0
 	for _, date := range dateOrder {
 		sd := byDate[date]
-
-		tx, err := h.db.Begin()
-		if err != nil {
+		if err := h.workoutStore.UpsertSession(userID, date, sd.notes, sd.muscleIDs, sd.exercises); err != nil {
+			slog.Error("import sessions: upsert session failed", "date", date, "err", err)
 			continue
 		}
-
-		var sessionID int64
-		err = tx.QueryRow(`
-			INSERT INTO workout_sessions (user_id, date, notes) VALUES ($1, $2, $3)
-			ON CONFLICT (user_id, date) DO UPDATE SET notes = EXCLUDED.notes
-			RETURNING id`,
-			userID, date, sd.notes,
-		).Scan(&sessionID)
-		if err != nil {
-			tx.Rollback()
-			continue
-		}
-
-		if _, err = tx.Exec(`DELETE FROM workout_session_muscles WHERE session_id = $1`, sessionID); err != nil {
-			tx.Rollback()
-			continue
-		}
-		for _, mID := range sd.muscleIDs {
-			tx.Exec(`INSERT INTO workout_session_muscles (session_id, muscle_group_id) VALUES ($1, $2)`, sessionID, mID)
-		}
-
-		if _, err = tx.Exec(`DELETE FROM workout_session_exercises WHERE session_id = $1`, sessionID); err != nil {
-			tx.Rollback()
-			continue
-		}
-		for _, ex := range sd.exercises {
-			tx.Exec(`
-				INSERT INTO workout_session_exercises (session_id, exercise_id, sets, reps, weight)
-				VALUES ($1, $2, $3, $4, $5)`,
-				sessionID, ex.id, ex.sets, ex.reps, ex.weight,
-			)
-		}
-
-		if err = tx.Commit(); err == nil {
-			count++
-		}
+		count++
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }
 
 // ── Pantry ─────────────────────────────────────────────────────────────────
@@ -296,7 +224,7 @@ func (h *Handler) ImportPantry(w http.ResponseWriter, r *http.Request) {
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -316,21 +244,16 @@ func (h *Handler) ImportPantry(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		var existing int64
-		err := h.db.QueryRow(
-			`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`, userID, name,
-		).Scan(&existing)
-		if err == sql.ErrNoRows {
-			_, err = h.db.Exec(
-				`INSERT INTO pantry_items (user_id, name, category, tier) VALUES ($1, $2, $3, $4)`,
-				userID, name, category, tier,
-			)
-			if err == nil {
-				count++
-			}
+		inserted, err := h.pantryStore.UpsertPantryItem(userID, name, category, tier)
+		if err != nil {
+			slog.Error("import pantry: upsert failed", "name", name, "err", err)
+			continue
+		}
+		if inserted {
+			count++
 		}
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }
 
 // ── Shopping ───────────────────────────────────────────────────────────────
@@ -340,11 +263,9 @@ func (h *Handler) ImportShopping(w http.ResponseWriter, r *http.Request) {
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	pantryCache := map[string]int64{}
 
 	count := 0
 	for _, row := range rows {
@@ -354,29 +275,16 @@ func (h *Handler) ImportShopping(w http.ResponseWriter, r *http.Request) {
 		}
 		quantity := strings.TrimSpace(row["quantity"])
 
-		pantryID, ok := pantryCache[itemName]
-		if !ok {
-			err := h.db.QueryRow(
-				`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`,
-				userID, itemName,
-			).Scan(&pantryID)
-			if err != nil {
-				continue
-			}
-			pantryCache[itemName] = pantryID
+		ok, err := h.pantryStore.AddShoppingByPantryName(userID, itemName, quantity, pantry.StoreCategories[0])
+		if err != nil {
+			slog.Error("import shopping: add failed", "item", itemName, "err", err)
+			continue
 		}
-
-		_, err := h.db.Exec(`
-			INSERT INTO shopping_list (user_id, pantry_item_id, quantity)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (user_id, pantry_item_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
-			userID, pantryID, quantity,
-		)
-		if err == nil {
+		if ok {
 			count++
 		}
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }
 
 // ── Recipes ────────────────────────────────────────────────────────────────
@@ -386,33 +294,12 @@ func (h *Handler) ImportRecipes(w http.ResponseWriter, r *http.Request) {
 
 	var rows []map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		respond.Err(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	recipeCache := map[string]int64{}
 	pantryCache := map[string]int64{}
-
-	findOrCreateRecipe := func(name string) (int64, error) {
-		if id, ok := recipeCache[name]; ok {
-			return id, nil
-		}
-		var id int64
-		err := h.db.QueryRow(
-			`SELECT id FROM recipes WHERE user_id = $1 AND name = $2`, userID, name,
-		).Scan(&id)
-		if err == sql.ErrNoRows {
-			err = h.db.QueryRow(
-				`INSERT INTO recipes (user_id, name) VALUES ($1, $2) RETURNING id`,
-				userID, name,
-			).Scan(&id)
-		}
-		if err != nil {
-			return 0, err
-		}
-		recipeCache[name] = id
-		return id, nil
-	}
 
 	count := 0
 	for _, row := range rows {
@@ -421,9 +308,15 @@ func (h *Handler) ImportRecipes(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		recipeID, err := findOrCreateRecipe(recipeName)
-		if err != nil {
-			continue
+		recipeID, ok := recipeCache[recipeName]
+		if !ok {
+			id, err := h.recipesStore.FindOrCreateRecipe(userID, recipeName)
+			if err != nil {
+				slog.Error("import recipes: find/create recipe failed", "name", recipeName, "err", err)
+				continue
+			}
+			recipeCache[recipeName] = id
+			recipeID = id
 		}
 		count++
 
@@ -435,21 +328,21 @@ func (h *Handler) ImportRecipes(w http.ResponseWriter, r *http.Request) {
 
 		pantryID, ok := pantryCache[ingName]
 		if !ok {
-			err := h.db.QueryRow(
-				`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`,
-				userID, ingName,
-			).Scan(&pantryID)
+			id, err := h.recipesStore.FindPantryIDByName(userID, ingName)
 			if err != nil {
+				slog.Error("import recipes: find pantry item failed", "name", ingName, "err", err)
 				continue
 			}
-			pantryCache[ingName] = pantryID
+			if id == 0 {
+				continue // unknown pantry item
+			}
+			pantryCache[ingName] = id
+			pantryID = id
 		}
 
-		h.db.Exec(`
-			INSERT INTO recipe_ingredients (recipe_id, pantry_item_id, quantity)
-			VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-			recipeID, pantryID, quantity,
-		)
+		if err := h.recipesStore.UpsertIngredient(recipeID, pantryID, quantity); err != nil {
+			slog.Error("import recipes: upsert ingredient failed", "recipe", recipeName, "ingredient", ingName, "err", err)
+		}
 	}
-	writeOK(w, count)
+	respond.JSON(w, map[string]int{"imported": count})
 }

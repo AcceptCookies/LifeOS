@@ -1,10 +1,13 @@
 package main
 
 import (
-	"encoding/json"
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -15,13 +18,15 @@ import (
 	"lifeos/importh"
 	"lifeos/pantry"
 	"lifeos/recipes"
+	"lifeos/respond"
 	"lifeos/workout"
 )
 
 func main() {
 	conn, err := db.Open()
 	if err != nil {
-		log.Fatalf("db: %v", err)
+		slog.Error("db init failed", "err", err)
+		os.Exit(1)
 	}
 	defer conn.Close()
 
@@ -41,21 +46,22 @@ func main() {
 	workoutStore := workout.NewStore(conn)
 	workoutHandler := workout.NewHandler(workoutStore)
 
-	importHandler := importh.NewHandler(conn)
+	importHandler := importh.NewHandler(pantryStore, workoutStore, recipesStore)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(corsMiddleware)
 
 	// Public routes
 	r.Post("/api/auth/register", authHandler.Register)
 	r.Post("/api/auth/login", authHandler.Login)
 	r.Get("/api/meta", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		respond.JSON(w, map[string]any{
 			"tiers":             pantry.ValidTiers,
 			"pantry_categories": pantry.Categories,
+			"store_categories":  pantry.StoreCategories,
 		})
 	})
 
@@ -80,15 +86,14 @@ func main() {
 			cookedRecipes, _ := recipesStore.GetCookedByDate(userID, date)
 
 			type DaySummary struct {
-				Date          string      `json:"date"`
-				Habits        any         `json:"habits"`
-				Muscles       []string    `json:"muscles"`
-				WorkoutNotes  string      `json:"workout_notes"`
-				CookedRecipes []string    `json:"cooked_recipes"`
+				Date          string   `json:"date"`
+				Habits        any      `json:"habits"`
+				Muscles       []string `json:"muscles"`
+				WorkoutNotes  string   `json:"workout_notes"`
+				CookedRecipes []string `json:"cooked_recipes"`
 			}
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(DaySummary{
+			respond.JSON(w, DaySummary{
 				Date:          date,
 				Habits:        habitLog,
 				Muscles:       muscles,
@@ -102,16 +107,44 @@ func main() {
 	if port == "" {
 		port = "8083"
 	}
-	log.Printf("lifeos backend listening on :%s", port)
-	if err = http.ListenAndServe(":"+port, r); err != nil {
-		log.Fatal(err)
+
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+
+	go func() {
+		slog.Info("starting", "port", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("shutting down gracefully")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("forced shutdown", "err", err)
+	}
+	slog.Info("server stopped")
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
+	allowed := os.Getenv("CORS_ORIGIN")
+	if allowed == "" {
+		allowed = "*"
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -162,3 +162,44 @@ func (s *Store) UndoCooking(userID, recipeID int64) error {
 		)`, userID, recipeID)
 	return err
 }
+
+// FindOrCreateRecipe returns the ID of an existing recipe, or creates it and returns its new ID.
+func (s *Store) FindOrCreateRecipe(userID int64, name string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT id FROM recipes WHERE user_id = $1 AND name = $2`, userID, name,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		err = s.db.QueryRow(
+			`INSERT INTO recipes (user_id, name) VALUES ($1, $2) RETURNING id`,
+			userID, name,
+		).Scan(&id)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// UpsertIngredient inserts an ingredient into a recipe if it doesn't already exist.
+func (s *Store) UpsertIngredient(recipeID, pantryItemID int64, quantity string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO recipe_ingredients (recipe_id, pantry_item_id, quantity)
+		VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		recipeID, pantryItemID, quantity,
+	)
+	return err
+}
+
+// FindPantryIDByName returns the pantry_items.id for a given user and item name.
+// Returns 0, nil if not found.
+func (s *Store) FindPantryIDByName(userID int64, name string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`, userID, name,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}

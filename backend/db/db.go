@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -25,6 +26,11 @@ func Open() (*sql.DB, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
+	conn.SetConnMaxIdleTime(5 * time.Minute)
+
 	if err = conn.Ping(); err != nil {
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
@@ -33,7 +39,7 @@ func Open() (*sql.DB, error) {
 		return nil, fmt.Errorf("migrations: %w", err)
 	}
 
-	log.Println("db ready")
+	slog.Info("db ready")
 	return conn, nil
 }
 
