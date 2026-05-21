@@ -1,0 +1,17 @@
+[Unit]
+Description=LifeOS Backend (port 8083)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=lifeos
+WorkingDirectory=/opt/lifeos
+EnvironmentFile=/opt/lifeos/.env
+ExecStart=/opt/lifeos/lifeos
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
