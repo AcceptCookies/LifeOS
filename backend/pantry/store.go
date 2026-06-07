@@ -161,11 +161,28 @@ func (s *Store) UpsertPantryItem(userID int64, name, category string, tier *stri
 }
 
 // AddShoppingByPantryName looks up a pantry item by name and upserts it into the shopping list.
+// Matching is fuzzy: exact (case-insensitive) first, then prefix in both directions,
+// then strip-last-char (handles Slovak singular/plural like paprika↔papriky).
 // Returns true if the row was inserted or updated successfully.
 func (s *Store) AddShoppingByPantryName(userID int64, pantryName, quantity, storeCategory string) (bool, error) {
 	var pantryID int64
-	err := s.db.QueryRow(
-		`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`, userID, pantryName,
+	err := s.db.QueryRow(`
+		SELECT id FROM pantry_items
+		WHERE user_id = $1 AND (
+			LOWER(name) = LOWER($2)
+			OR (LENGTH(name) > 3 AND LOWER($2) LIKE LOWER(name) || '%')
+			OR (LENGTH($2) > 3 AND LOWER(name) LIKE LOWER($2) || '%')
+			OR (LENGTH(name) > 3 AND LENGTH($2) > 3
+				AND LOWER(SUBSTRING(name, 1, LENGTH(name)-1)) = LOWER(SUBSTRING($2, 1, LENGTH($2)-1)))
+		)
+		ORDER BY
+			CASE
+				WHEN LOWER(name) = LOWER($2) THEN 0
+				WHEN LOWER($2) LIKE LOWER(name) || '%' THEN 1
+				WHEN LOWER(name) LIKE LOWER($2) || '%' THEN 2
+				ELSE 3
+			END
+		LIMIT 1`, userID, pantryName,
 	).Scan(&pantryID)
 	if err == sql.ErrNoRows {
 		return false, nil
