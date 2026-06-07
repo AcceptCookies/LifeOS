@@ -69,14 +69,9 @@ Osobná life management platforma. Sledovanie návykov, tréningov, jedálnička
 - [ ] Meditácia – záznamy session, dĺžka, typ
 
 ### Fáza 5 – Nasadenie
-- [ ] Docker Compose pre produkciu
-- [ ] VPS (Hetzner) + HTTPS (Let's Encrypt)
+- [x] VPS (Hetzner) – `http://178.105.173.48:8000`
+- [ ] HTTPS (Let's Encrypt + doména)
 - [ ] CI/CD pipeline
-
-### Pred deployom – povinné
-- [ ] Nastaviť `JWT_SECRET` v Railway (inak sa tokeny invalidujú pri každom reštarte)
-- [ ] Nastaviť `CORS_ORIGIN` v Railway na URL Cloudflare Pages (napr. `https://lifeos.pages.dev`)
-- [ ] Nastaviť `VITE_API_URL` v Cloudflare Pages na URL Railway backendu
 
 ---
 
@@ -127,7 +122,7 @@ zivot/
 | Frontend | React 19, Vite 7 |
 | Typy | tygo (Go → TypeScript .d.ts) |
 | Mobile | PWA |
-| Nasadenie | lokálne |
+| Nasadenie | Hetzner VPS (Ubuntu 26.04, CPX11) |
 
 ---
 
@@ -154,6 +149,84 @@ make smoke
 
 | Premenná | Default | Popis |
 |----------|---------|-------|
-| `DATABASE_URL` | `postgres://zivot:zivot@localhost:5433/zivot?sslmode=disable` | PostgreSQL DSN |
+| `DATABASE_URL` | `postgres://lifeos:lifeos@localhost:5433/lifeos?sslmode=disable` | PostgreSQL DSN |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT podpisovací kľúč |
 | `PORT` | `8083` | Port backendu |
+| `CORS_ORIGIN` | `*` | Povolená CORS origin |
+
+---
+
+## Hetzner nasadenie
+
+**Server:** `178.105.173.48` — Ubuntu 26.04, CPX11  
+**URL:** `http://178.105.173.48:8000`  
+**Adresár:** `/opt/lifeos`  
+**Používateľ:** `lifeos` (systemd service beží pod ním)  
+**DB:** PostgreSQL 18, databáza `lifeos`, user `lifeos`
+
+### Štruktúra na serveri
+
+```
+/opt/lifeos/          ← klon repozitára (vlastník: lifeos)
+├── .env              ← produkčné premenné (nie v gite!)
+├── lifeos            ← skompilovaná Go binárka
+├── backend/
+├── frontend/
+│   └── dist/         ← Vite build, servuje nginx
+└── deploy/
+    ├── 01-server-setup.sh   ← spusti RAZ pri novom serveri
+    ├── 02-deploy.sh         ← spúšťaj po každom git push
+    ├── nginx.conf
+    └── services/lifeos.service
+```
+
+### Prvé nasadenie (nový server)
+
+```bash
+# 1. Lokálne — nahraj deploy skripty
+scp -r /path/to/LifeOS/deploy/ root@178.105.173.48:/tmp/lifeos-deploy
+
+# 2. Na serveri ako root
+bash /tmp/lifeos-deploy/01-server-setup.sh
+
+# Skript vyžaduje: root SSH kľúč pridaný do GitHub repo ako Deploy key
+# GitHub → AcceptCookies/LifeOS → Settings → Deploy keys
+# Kľúč: cat /root/.ssh/id_ed25519.pub
+```
+
+### Update (po git push)
+
+```bash
+ssh root@178.105.173.48
+bash /opt/lifeos/deploy/02-deploy.sh
+```
+
+Skript robí: `git pull` → `go build` → `npm run build` → `systemctl restart lifeos`
+
+### Užitočné príkazy na serveri
+
+```bash
+# Logy backendu
+journalctl -u lifeos -f
+
+# Stav service
+systemctl status lifeos
+
+# Reštart
+systemctl restart lifeos
+
+# Editácia .env
+nano /opt/lifeos/.env
+
+# nginx logy
+tail -f /var/log/nginx/error.log
+```
+
+### Poznámky k setupu
+
+- **root SSH na GitHub:** `cat /root/.ssh/id_ed25519.pub` — pridaný ako Deploy key v repo
+- **Go verzia na serveri:** 1.23.4 (skript podporuje upgrade)
+- **Node verzia na serveri:** 24.x
+- **PostgreSQL:** verzia 18, počúva na localhost:5432
+- **nginx:** port 8000 (port 80 obsadený projektom chirurgia)
+- **lifeos service:** závisí na `postgresql.service`, auto-restart pri páde

@@ -105,6 +105,20 @@ export const api = {
     get: (date: string): Promise<Response | undefined> => request(`/api/day/${date}`),
   },
 
+  sales: {
+    featured: (): Promise<Response | undefined> => request("/api/sales/featured"),
+    search: (q: string): Promise<Response | undefined> => request(`/api/sales/search?q=${encodeURIComponent(q)}`),
+    history: (q: string): Promise<Response | undefined> => request(`/api/sales/history?q=${encodeURIComponent(q)}`),
+    scrape: (): Promise<Response | undefined> => request("/api/sales/scrape", { method: "POST" }),
+  },
+
+  bugs: {
+    list: (): Promise<Response | undefined> => request("/api/bugs"),
+    create: (text: string): Promise<Response | undefined> => request("/api/bugs", { method: "POST", body: JSON.stringify({ text }) }),
+    update: (id: number, patch: { text?: string; status?: string }): Promise<Response | undefined> => request(`/api/bugs/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+    delete: (id: number): Promise<Response | undefined> => request(`/api/bugs/${id}`, { method: "DELETE" }),
+  },
+
   async login(email: string, password: string, persistent = true): Promise<void> {
     const res = await fetch(`${BASE}/api/auth/login`, {
       method: "POST",

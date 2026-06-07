@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, token } from "./api";
 import AuthPage from "./AuthPage";
+import BugButton from "./BugButton";
 import PantryPage from "./PantryPage";
 import WorkoutPage from "./WorkoutPage";
 
@@ -194,6 +195,8 @@ export default function App(): JSX.Element {
           ))}
         </div>
       )}
+
+      <BugButton />
     </div>
   );
 }

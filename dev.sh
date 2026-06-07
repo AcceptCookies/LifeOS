@@ -8,17 +8,17 @@ cleanup() {
   echo ""
   echo "Stopping..."
   kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null
-  docker-compose -f "$ROOT/docker-compose.yml" stop
+  docker compose -f "$ROOT/docker-compose.yml" stop
 }
 trap cleanup EXIT INT TERM
 
 # 1. Postgres
 echo "Starting postgres..."
-docker-compose -f "$ROOT/docker-compose.yml" up -d
+docker compose -f "$ROOT/docker-compose.yml" up -d
 
 # Wait for postgres to be ready
 echo "Waiting for postgres..."
-until docker-compose -f "$ROOT/docker-compose.yml" exec -T postgres pg_isready -U lifeos -q; do
+until docker compose -f "$ROOT/docker-compose.yml" exec -T postgres pg_isready -U lifeos -q; do
   sleep 1
 done
 

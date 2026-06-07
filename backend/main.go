@@ -9,16 +9,20 @@ import (
 	"syscall"
 	"time"
 
+	_ "time/tzdata"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"lifeos/auth"
+	"lifeos/bugs"
 	"lifeos/db"
 	"lifeos/habits"
 	"lifeos/importh"
 	"lifeos/pantry"
 	"lifeos/recipes"
 	"lifeos/respond"
+	"lifeos/sales"
 	"lifeos/workout"
 )
 
@@ -45,6 +49,12 @@ func main() {
 
 	workoutStore := workout.NewStore(conn)
 	workoutHandler := workout.NewHandler(workoutStore)
+
+	bugsStore := bugs.NewStore(conn)
+	bugsHandler := bugs.NewHandler(bugsStore)
+
+	salesStore := sales.NewStore(conn)
+	salesHandler := sales.NewHandler(salesStore)
 
 	importHandler := importh.NewHandler(pantryStore, workoutStore, recipesStore)
 
@@ -75,6 +85,8 @@ func main() {
 		recipesHandler.RegisterRoutes(r)
 		workoutHandler.RegisterRoutes(r)
 		importHandler.RegisterRoutes(r)
+		bugsHandler.RegisterRoutes(r)
+		salesHandler.RegisterRoutes(r)
 
 		r.Get("/api/day/{date}", func(w http.ResponseWriter, req *http.Request) {
 			userID := auth.UserIDFromCtx(req.Context())
@@ -124,6 +136,9 @@ func main() {
 		}
 	}()
 
+	// Weekly scraper — runs at Monday 06:00 CET and on first start
+	go runWeeklyScraper(salesStore)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -135,6 +150,54 @@ func main() {
 		slog.Error("forced shutdown", "err", err)
 	}
 	slog.Info("server stopped")
+}
+
+func runWeeklyScraper(store *sales.Store) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("weekly scraper goroutine panicked — scheduler stopped", "panic", p)
+		}
+	}()
+
+	loc, err := time.LoadLocation("Europe/Bratislava")
+	if err != nil {
+		loc = time.UTC
+	}
+
+	doScrape := func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("doScrape panicked", "panic", p)
+			}
+		}()
+		items, err := sales.ScrapeFeatured()
+		if err != nil {
+			slog.Error("weekly scrape failed", "err", err)
+			return
+		}
+		if err := store.BulkInsert(items); err != nil {
+			slog.Error("weekly scrape save failed", "err", err)
+			return
+		}
+		_ = store.CleanOld(time.Now().AddDate(0, 0, -30))
+		slog.Info("weekly scrape done", "items", len(items))
+	}
+
+	// Scrape once at startup
+	doScrape()
+
+	// Then every Monday at 06:00
+	for {
+		now := time.Now().In(loc)
+		daysUntilMonday := (int(time.Monday) - int(now.Weekday()) + 7) % 7
+		if daysUntilMonday == 0 && now.Hour() >= 6 {
+			daysUntilMonday = 7
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day()+daysUntilMonday, 6, 0, 0, 0, loc)
+		slog.Info("next scrape scheduled", "at", next.Format(time.RFC3339))
+		time.Sleep(time.Until(next))
+		doScrape()
+	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

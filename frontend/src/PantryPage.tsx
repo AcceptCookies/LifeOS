@@ -3,6 +3,7 @@ import { api, getMeta } from "./api";
 import ImportModal from "./ImportModal";
 import { BLUEPRINTS } from "./importBlueprints";
 import type { Blueprint } from "./importBlueprints";
+import SalesSection from "./SalesSection";
 
 const MONO = "'SF Mono', 'Fira Code', 'Consolas', monospace";
 
@@ -419,6 +420,7 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
   const [storeCategories, setStoreCategories] = useState<string[]>(["potraviny", "pekáreň", "drogéria", "domácnosť", "iné"]);
   const [addShopOpen, setAddShopOpen] = useState(false);
   const [editShopItem, setEditShopItem] = useState<ShoppingItem | null>(null);
+  const [shopSubTab, setShopSubTab] = useState<"zoznam" | "akcie">("zoznam");
 
   function showRecipeToast(msg: string, onUndo: (() => void) | null = null): void {
     setRecipeToast({ msg, onUndo });
@@ -885,40 +887,62 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
         {/* ── Nákup ── */}
         {activeTab === "shop" && (
           <>
-            {boughtMsg && <div style={S.boughtToast}>✓ {boughtMsg} zakúpené</div>}
-            <button style={S.addShopBtn} onClick={() => setAddShopOpen(true)}>
-              + Pridať položku
-            </button>
-            {addShopOpen && (
-              <AddShopModal
-                storeCategories={storeCategories}
-                onAdd={addManualShoppingItem}
-                onClose={() => setAddShopOpen(false)}
-              />
-            )}
-            {editShopItem && (
-              <EditShopModal
-                item={editShopItem}
-                storeCategories={storeCategories}
-                onSave={saveShopEdit}
-                onClose={() => setEditShopItem(null)}
-              />
-            )}
-            {shopping.length === 0 ? (
-              <div style={S.emptyState}>Nič nekupuješ</div>
-            ) : (
-              <div>
-                {Object.entries(groupByStoreCategory(shopping)).map(([cat, catItems]) => (
-                  <StickyNote
-                    key={cat}
-                    category={cat}
-                    items={catItems}
-                    onRemove={removeFromShopping}
-                    onEdit={setEditShopItem}
+            {/* Sub-tabs: Zoznam / Akcie */}
+            <div style={S.shopSubTabs}>
+              <button
+                style={{ ...S.shopSubTab, ...(shopSubTab === "zoznam" ? S.shopSubTabActive : {}) }}
+                onClick={() => setShopSubTab("zoznam")}
+              >
+                Zoznam
+              </button>
+              <button
+                style={{ ...S.shopSubTab, ...(shopSubTab === "akcie" ? S.shopSubTabActive : {}) }}
+                onClick={() => setShopSubTab("akcie")}
+              >
+                Akcie v obchodoch
+              </button>
+            </div>
+
+            {shopSubTab === "zoznam" && (
+              <>
+                {boughtMsg && <div style={S.boughtToast}>✓ {boughtMsg} zakúpené</div>}
+                <button style={S.addShopBtn} onClick={() => setAddShopOpen(true)}>
+                  + Pridať položku
+                </button>
+                {addShopOpen && (
+                  <AddShopModal
+                    storeCategories={storeCategories}
+                    onAdd={addManualShoppingItem}
+                    onClose={() => setAddShopOpen(false)}
                   />
-                ))}
-              </div>
+                )}
+                {editShopItem && (
+                  <EditShopModal
+                    item={editShopItem}
+                    storeCategories={storeCategories}
+                    onSave={saveShopEdit}
+                    onClose={() => setEditShopItem(null)}
+                  />
+                )}
+                {shopping.length === 0 ? (
+                  <div style={S.emptyState}>Nič nekupuješ</div>
+                ) : (
+                  <div>
+                    {Object.entries(groupByStoreCategory(shopping)).map(([cat, catItems]) => (
+                      <StickyNote
+                        key={cat}
+                        category={cat}
+                        items={catItems}
+                        onRemove={removeFromShopping}
+                        onEdit={setEditShopItem}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
+
+            {shopSubTab === "akcie" && <SalesSection />}
           </>
         )}
 
@@ -1232,6 +1256,18 @@ const S: Record<string, React.CSSProperties> = {
     fontFamily: MONO, letterSpacing: "0.04em",
     padding: "11px 0", cursor: "pointer",
     transition: "border-color 0.15s, color 0.15s",
+  },
+  shopSubTabs: {
+    display: "flex", gap: 6, marginBottom: 16,
+  },
+  shopSubTab: {
+    background: "none", border: "1px solid #1e1e1e", borderRadius: 6,
+    color: "#3a3a3a", fontSize: 12, fontWeight: 600,
+    padding: "7px 16px", cursor: "pointer", fontFamily: MONO,
+    letterSpacing: "0.04em", transition: "all 0.15s",
+  },
+  shopSubTabActive: {
+    background: "#0a1a0a", border: "1px solid #22c55e30", color: "#22c55e",
   },
   importBtnSmall: {
     background: "none",
