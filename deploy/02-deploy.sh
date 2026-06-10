@@ -30,5 +30,5 @@ systemctl restart lifeos
 
 echo ""
 echo "=== Deploy hotový ==="
-echo "http://178.105.173.48:8000"
+echo "http://178.105.173.48:8082"
 systemctl status lifeos --no-pager -l | tail -10

@@ -67,9 +67,9 @@ else
   echo ".env už existuje"
 fi
 
-echo "=== 8. Firewall — pridanie portu 8000 ==="
-ufw allow 8000/tcp
-echo "Port 8000 otvorený"
+echo "=== 8. Firewall — pridanie portu 8082 ==="
+ufw allow 8082/tcp
+echo "Port 8082 otvorený"
 
 echo "=== 9. systemd service ==="
 cp ${APP_DIR}/deploy/services/lifeos.service /etc/systemd/system/
