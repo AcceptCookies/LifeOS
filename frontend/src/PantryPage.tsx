@@ -46,6 +46,28 @@ interface Recipe {
   ingredients: RecipeIngredient[];
 }
 
+function normalizeStr(s: string): string {
+  return s.toLowerCase()
+    .normalize("NFD")
+    // eslint-disable-next-line no-misleading-character-class
+    .replace(/[̀-ͯ]/g, "")
+    .trim();
+}
+
+// Slovak-aware search: matches both singular and plural forms
+// e.g. "banan" finds "Banán" aj "Banány"; "jahoda" finds "jahody"
+function matchesSK(query: string, text: string): boolean {
+  if (!query.trim()) return true;
+  const q = normalizeStr(query);
+  const t = normalizeStr(text);
+  if (t.includes(q)) return true;
+  // Strip last 1–2 chars of query to get the stem → catches plurals/inflections
+  // e.g. "banany" → "banan" finds "banán"; "jahody" → "jahod" finds "jahoda"
+  if (q.length >= 4 && t.includes(q.slice(0, -1))) return true;
+  if (q.length >= 5 && t.includes(q.slice(0, -2))) return true;
+  return false;
+}
+
 function groupByStoreCategory(items: ShoppingItem[]): Record<string, ShoppingItem[]> {
   const groups: Record<string, ShoppingItem[]> = {};
   for (const item of items) {
@@ -416,6 +438,8 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [boughtMsg, setBoughtMsg] = useState<string | null>(null);
   const [addedToCartMsg, setAddedToCartMsg] = useState<string | null>(null);
+  const [shopFilter, setShopFilter] = useState("");
+  const [pantryFilter, setPantryFilter] = useState("");
   const [recipeToast, setRecipeToast] = useState<RecipeToast | null>(null);
   const [storeCategories, setStoreCategories] = useState<string[]>(["potraviny", "pekáreň", "drogéria", "domácnosť", "iné"]);
   const [addShopOpen, setAddShopOpen] = useState(false);
@@ -839,11 +863,19 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
             {deleteError && (
               <div style={S.deleteError}>{deleteError}</div>
             )}
+            {items.length > 0 && (
+              <input
+                style={S.filterInput}
+                placeholder="Hľadaj potravinu..."
+                value={pantryFilter}
+                onChange={(e) => setPantryFilter(e.target.value)}
+              />
+            )}
             {items.length === 0 ? (
               <div style={S.emptyState}>Kuchyňa je prázdna</div>
             ) : (
               <div style={S.card}>
-                {items.map((item) => {
+                {items.filter((item) => matchesSK(pantryFilter, item.name)).map((item) => {
                   const inCart = shoppingIds.has(item.id);
                   const tierColor = item.tier ? TIER_COLORS[item.tier] : null;
                   return (
@@ -909,6 +941,14 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
                 <button style={S.addShopBtn} onClick={() => setAddShopOpen(true)}>
                   + Pridať položku
                 </button>
+                {shopping.length > 0 && (
+                  <input
+                    style={S.filterInput}
+                    placeholder="Hľadaj v nákupe..."
+                    value={shopFilter}
+                    onChange={(e) => setShopFilter(e.target.value)}
+                  />
+                )}
                 {addShopOpen && (
                   <AddShopModal
                     storeCategories={storeCategories}
@@ -928,7 +968,9 @@ export default function PantryPage({ activeTab }: PantryPageProps): JSX.Element 
                   <div style={S.emptyState}>Nič nekupuješ</div>
                 ) : (
                   <div>
-                    {Object.entries(groupByStoreCategory(shopping)).map(([cat, catItems]) => (
+                    {Object.entries(groupByStoreCategory(
+                      shopping.filter((s) => matchesSK(shopFilter, s.name))
+                    )).map(([cat, catItems]) => (
                       <StickyNote
                         key={cat}
                         category={cat}
@@ -1248,6 +1290,19 @@ const S: Record<string, React.CSSProperties> = {
     background: "none", border: "1px solid #333", borderRadius: 5,
     color: "#555", fontSize: 14, padding: "2px 8px", cursor: "pointer",
     textAlign: "center",
+  },
+  filterInput: {
+    width: "100%",
+    background: "#0c0c0c",
+    border: "1px solid #222",
+    borderRadius: 8,
+    padding: "9px 14px",
+    color: "#e0e0e0",
+    fontSize: 14,
+    outline: "none",
+    marginBottom: 12,
+    boxSizing: "border-box" as const,
+    fontFamily: "'Inter', system-ui, sans-serif",
   },
   addShopBtn: {
     width: "100%", marginBottom: 14,
