@@ -81,6 +81,7 @@ func main() {
 		r.HandleFunc("/api/today", habitsHandler.Today)
 		r.Get("/api/history", habitsHandler.History)
 		r.Get("/api/streaks", habitsHandler.Streaks)
+		r.HandleFunc("/api/habits/{date}", habitsHandler.ByDate)
 		pantryHandler.RegisterRoutes(r)
 		recipesHandler.RegisterRoutes(r)
 		workoutHandler.RegisterRoutes(r)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"lifeos/auth"
 	"lifeos/respond"
 	"lifeos/timeutil"
@@ -117,6 +118,47 @@ func (h *Handler) Streaks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, streaks)
+}
+
+func (h *Handler) ByDate(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	date := chi.URLParam(r, "date")
+
+	switch r.Method {
+	case http.MethodGet:
+		entry, err := h.store.GetByDate(userID, date)
+		if err != nil {
+			respond.Err(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if entry == nil {
+			entry = &Log{Date: date}
+		}
+		respond.JSON(w, entry)
+
+	case http.MethodPut:
+		var req Log
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respond.Err(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		req.Date = date
+		if err := h.store.Upsert(userID, req); err != nil {
+			respond.Err(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodDelete:
+		if err := h.store.Delete(userID, date); err != nil {
+			respond.Err(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func habitValue(e *Log, key string) bool {

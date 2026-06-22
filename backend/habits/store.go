@@ -92,6 +92,14 @@ func (s *Store) History(userID int64, limit int) ([]Log, error) {
 	return result, nil
 }
 
+func (s *Store) Delete(userID int64, date string) error {
+	_, err := s.db.Exec(
+		`DELETE FROM habits_log WHERE user_id = $1 AND date = $2`,
+		userID, date,
+	)
+	return err
+}
+
 func (s *Store) RecentForStreaks(userID int64, limit int) ([]Log, error) {
 	rows, err := s.db.Query(`
 		SELECT date, strength_training, cardio, walking, running,

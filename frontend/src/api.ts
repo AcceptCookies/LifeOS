@@ -108,6 +108,12 @@ export const api = {
     },
   },
 
+  habits: {
+    get: (date: string): Promise<Response | undefined> => request(`/api/habits/${date}`),
+    save: (date: string, data: Record<string, unknown>): Promise<Response | undefined> => request(`/api/habits/${date}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (date: string): Promise<Response | undefined> => request(`/api/habits/${date}`, { method: "DELETE" }),
+  },
+
   day: {
     get: (date: string): Promise<Response | undefined> => request(`/api/day/${date}`),
   },

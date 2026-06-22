@@ -315,16 +315,24 @@ interface DayData {
 interface DayModalProps {
   date: string;
   onClose: () => void;
+  onSaved: () => void;
 }
 
-function DayModal({ date, onClose }: DayModalProps): JSX.Element {
+function DayModal({ date, onClose, onSaved }: DayModalProps): JSX.Element {
   const [data, setData] = useState<DayData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<HabitForm>(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [moveDate, setMoveDate] = useState("");
+  const [showMove, setShowMove] = useState(false);
+  const [moving, setMoving] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.day.get(date).then(r => r!.json()).then((d: DayData) => {
       setData(d);
+      if (d.habits) setForm(apiFormFromResponse(d.habits));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [date]);
@@ -333,19 +341,47 @@ function DayModal({ date, onClose }: DayModalProps): JSX.Element {
     if (e.target === overlayRef.current) onClose();
   }
 
-  const habits = data?.habits;
-  const doneHabits = habits ? HABITS.filter(h => habits[h.key]) : [];
+  async function handleSave(): Promise<void> {
+    setSaving(true);
+    const body: Record<string, unknown> = {};
+    for (const h of HABITS) body[h.key] = !!form[h.key as keyof HabitForm];
+    body.notes = form.notes || "";
+    try {
+      await api.habits.save(date, body);
+      onSaved();
+      onClose();
+    } catch { /* keep open */ } finally { setSaving(false); }
+  }
+
+  async function handleDelete(): Promise<void> {
+    if (!confirm(`Vymazať záznamy návykov pre ${formatDateSK(date)}?`)) return;
+    setDeleting(true);
+    try {
+      await api.habits.delete(date);
+      onSaved();
+      onClose();
+    } catch { /* keep open */ } finally { setDeleting(false); }
+  }
+
+  async function handleMove(): Promise<void> {
+    if (!moveDate || moveDate === date) return;
+    setMoving(true);
+    const body: Record<string, unknown> = {};
+    for (const h of HABITS) body[h.key] = !!form[h.key as keyof HabitForm];
+    body.notes = form.notes || "";
+    try {
+      await api.habits.save(moveDate, body);
+      await api.habits.delete(date);
+      onSaved();
+      onClose();
+    } catch { /* keep open */ } finally { setMoving(false); }
+  }
+
   const hasWorkout = (data?.muscles?.length ?? 0) > 0;
   const hasRecipes = (data?.cooked_recipes?.length ?? 0) > 0;
-  const hasNotes = habits?.notes || data?.workout_notes;
-  const isEmpty = !loading && doneHabits.length === 0 && !hasWorkout && !hasRecipes && !hasNotes;
 
   return (
-    <div
-      ref={overlayRef}
-      onClick={handleOverlayClick}
-      style={DM.overlay}
-    >
+    <div ref={overlayRef} onClick={handleOverlayClick} style={DM.overlay}>
       <div style={DM.modal}>
         <div style={DM.header}>
           <div style={DM.dateTitle}>{formatDateSK(date)}</div>
@@ -354,53 +390,98 @@ function DayModal({ date, onClose }: DayModalProps): JSX.Element {
 
         {loading && <div style={DM.empty}>Načítavam...</div>}
 
-        {!loading && isEmpty && (
-          <div style={DM.empty}>Žiadne záznamy pre tento deň.</div>
-        )}
-
-        {!loading && doneHabits.length > 0 && (
-          <div style={DM.section}>
-            <div style={DM.sectionTitle}>Návyky</div>
-            <div style={DM.habitList}>
-              {doneHabits.map(({ key, label, color }) => (
-                <span key={key} style={{ ...DM.habitChip, borderColor: color, color }}>
-                  {label}
-                </span>
-              ))}
+        {!loading && (
+          <>
+            {/* Editable habits */}
+            <div style={DM.section}>
+              <div style={DM.sectionTitle}>Návyky</div>
+              <div style={DM.habitEditList}>
+                {HABITS.map(({ key, label, color }) => {
+                  const checked = !!form[key as keyof HabitForm];
+                  return (
+                    <label key={key} style={DM.habitEditRow}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
+                        style={{ accentColor: color, width: 17, height: 17, flexShrink: 0 }}
+                      />
+                      <span style={{ fontSize: 13, color: checked ? color : "#555" }}>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
 
-        {!loading && hasWorkout && (
-          <div style={DM.section}>
-            <div style={DM.sectionTitle}>Tréning</div>
-            <div style={DM.muscleList}>
-              {data!.muscles!.map((m, i) => (
-                <span key={i} style={DM.muscleChip}>{m}</span>
-              ))}
+            {/* Notes */}
+            <div style={DM.section}>
+              <div style={DM.sectionTitle}>Poznámky</div>
+              <textarea
+                style={DM.notesInput}
+                rows={2}
+                placeholder="Poznámky..."
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              />
             </div>
-            {data!.workout_notes && (
-              <div style={DM.notesText}>{data!.workout_notes}</div>
+
+            {/* Workout (read-only) */}
+            {hasWorkout && (
+              <div style={DM.section}>
+                <div style={DM.sectionTitle}>Tréning</div>
+                <div style={DM.muscleList}>
+                  {data!.muscles!.map((m, i) => (
+                    <span key={i} style={DM.muscleChip}>{m}</span>
+                  ))}
+                </div>
+                {data!.workout_notes && <div style={DM.notesText}>{data!.workout_notes}</div>}
+              </div>
             )}
-          </div>
-        )}
 
-        {!loading && hasRecipes && (
-          <div style={DM.section}>
-            <div style={DM.sectionTitle}>Jedlo</div>
-            <div style={DM.recipeList}>
-              {data!.cooked_recipes!.map((r, i) => (
-                <span key={i} style={DM.recipeChip}>{r}</span>
-              ))}
+            {/* Recipes (read-only) */}
+            {hasRecipes && (
+              <div style={DM.section}>
+                <div style={DM.sectionTitle}>Jedlo</div>
+                <div style={DM.recipeList}>
+                  {data!.cooked_recipes!.map((r, i) => (
+                    <span key={i} style={DM.recipeChip}>{r}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={DM.actions}>
+              <button style={DM.saveBtn} onClick={handleSave} disabled={saving}>
+                {saving ? "Ukladám..." : "Uložiť"}
+              </button>
+              <button style={DM.deleteBtn} onClick={handleDelete} disabled={deleting}>
+                {deleting ? "..." : "Vymazať"}
+              </button>
             </div>
-          </div>
-        )}
 
-        {!loading && habits?.notes && !hasWorkout && (
-          <div style={DM.section}>
-            <div style={DM.sectionTitle}>Poznámky</div>
-            <div style={DM.notesText}>{habits.notes}</div>
-          </div>
+            {/* Move to another date */}
+            {!showMove ? (
+              <button style={DM.moveToggle} onClick={() => setShowMove(true)}>
+                Presunúť na iný deň →
+              </button>
+            ) : (
+              <div style={DM.moveRow}>
+                <input
+                  type="date"
+                  style={DM.dateInput}
+                  value={moveDate}
+                  onChange={(e) => setMoveDate(e.target.value)}
+                />
+                <button style={DM.saveBtnSm} onClick={handleMove} disabled={moving || !moveDate}>
+                  {moving ? "..." : "Presunúť"}
+                </button>
+                <button style={DM.cancelBtnSm} onClick={() => { setShowMove(false); setMoveDate(""); }}>
+                  Zrušiť
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -514,6 +595,106 @@ const DM: Record<string, React.CSSProperties> = {
     textAlign: "center",
     padding: "20px 0",
   },
+
+  // Edit controls
+  habitEditList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  habitEditRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "5px 0",
+    cursor: "pointer",
+  },
+  notesInput: {
+    background: "#0c0c0c",
+    border: "1px solid #222",
+    borderRadius: 7,
+    padding: "8px 10px",
+    color: "#e8e8e8",
+    fontSize: 13,
+    outline: "none",
+    width: "100%",
+    resize: "vertical" as const,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    lineHeight: 1.5,
+    boxSizing: "border-box" as const,
+  },
+  actions: {
+    display: "flex",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  saveBtn: {
+    flex: 1,
+    background: "none",
+    border: "1px solid #22c55e40",
+    borderRadius: 7,
+    color: "#22c55e",
+    fontSize: 13,
+    fontWeight: 600,
+    padding: "10px 0",
+    cursor: "pointer",
+    letterSpacing: "0.04em",
+  },
+  deleteBtn: {
+    background: "none",
+    border: "1px solid #ef444430",
+    borderRadius: 7,
+    color: "#ef4444",
+    fontSize: 13,
+    padding: "10px 16px",
+    cursor: "pointer",
+  },
+  moveToggle: {
+    background: "none",
+    border: "none",
+    color: "#3a3a3a",
+    fontSize: 11,
+    cursor: "pointer",
+    padding: "4px 0",
+    letterSpacing: "0.03em",
+    display: "block",
+  },
+  moveRow: {
+    display: "flex",
+    gap: 6,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  dateInput: {
+    flex: 1,
+    background: "#0c0c0c",
+    border: "1px solid #222",
+    borderRadius: 6,
+    color: "#e8e8e8",
+    fontSize: 13,
+    padding: "6px 8px",
+    outline: "none",
+    colorScheme: "dark" as const,
+  },
+  saveBtnSm: {
+    background: "none",
+    border: "1px solid #22c55e40",
+    borderRadius: 6,
+    color: "#22c55e",
+    fontSize: 11,
+    padding: "5px 12px",
+    cursor: "pointer",
+  },
+  cancelBtnSm: {
+    background: "none",
+    border: "1px solid #1e1e1e",
+    borderRadius: 6,
+    color: "#444",
+    fontSize: 11,
+    padding: "5px 10px",
+    cursor: "pointer",
+  },
 };
 
 interface HabitTrackerProps {
@@ -620,7 +801,7 @@ function HabitTracker({ onLogout }: HabitTrackerProps): JSX.Element {
   return (
     <div style={S.page}>
       {selectedDay && (
-        <DayModal date={selectedDay} onClose={() => setSelectedDay(null)} />
+        <DayModal date={selectedDay} onClose={() => setSelectedDay(null)} onSaved={loadAll} />
       )}
       <div style={S.container}>
 
