@@ -34,6 +34,12 @@ type Session struct {
 	Exercises []SessionExercise `json:"exercises"`
 }
 
+type Split struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	MuscleIDs []int64 `json:"muscle_ids"`
+}
+
 type WeekStat struct {
 	WeekStart string `json:"week_start"`
 	Count     int    `json:"count"`
@@ -167,6 +173,116 @@ func (s *Store) DeleteExercise(userID, id int64) error {
 		id, userID,
 	)
 	return err
+}
+
+// ── Splits ─────────────────────────────────────────────────────────────────
+
+func (s *Store) ListSplits(userID int64) ([]Split, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name FROM workout_splits WHERE user_id = $1 ORDER BY id`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var splits []Split
+	idxMap := map[int64]int{}
+	for rows.Next() {
+		var sp Split
+		if err := rows.Scan(&sp.ID, &sp.Name); err != nil {
+			continue
+		}
+		sp.MuscleIDs = []int64{}
+		idxMap[sp.ID] = len(splits)
+		splits = append(splits, sp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(splits) > 0 {
+		mRows, err := s.db.Query(
+			`SELECT split_id, muscle_group_id FROM workout_split_muscles
+			 WHERE split_id IN (SELECT id FROM workout_splits WHERE user_id = $1)
+			 ORDER BY split_id`,
+			userID,
+		)
+		if err == nil {
+			defer mRows.Close()
+			for mRows.Next() {
+				var splitID, muscleID int64
+				if err := mRows.Scan(&splitID, &muscleID); err != nil {
+					continue
+				}
+				if idx, ok := idxMap[splitID]; ok {
+					splits[idx].MuscleIDs = append(splits[idx].MuscleIDs, muscleID)
+				}
+			}
+		}
+	}
+
+	if splits == nil {
+		splits = []Split{}
+	}
+	return splits, nil
+}
+
+func (s *Store) AddSplit(userID int64, name string) (*Split, error) {
+	sp := &Split{MuscleIDs: []int64{}}
+	err := s.db.QueryRow(
+		`INSERT INTO workout_splits (user_id, name) VALUES ($1, $2) RETURNING id, name`,
+		userID, name,
+	).Scan(&sp.ID, &sp.Name)
+	return sp, err
+}
+
+func (s *Store) UpdateSplit(userID, id int64, name string) error {
+	_, err := s.db.Exec(
+		`UPDATE workout_splits SET name = $1 WHERE id = $2 AND user_id = $3`,
+		name, id, userID,
+	)
+	return err
+}
+
+func (s *Store) DeleteSplit(userID, id int64) error {
+	_, err := s.db.Exec(
+		`DELETE FROM workout_splits WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	)
+	return err
+}
+
+func (s *Store) SetSplitMuscles(userID, splitID int64, muscleIDs []int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var exists bool
+	if err = tx.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM workout_splits WHERE id = $1 AND user_id = $2)`,
+		splitID, userID,
+	).Scan(&exists); err != nil || !exists {
+		return fmt.Errorf("split not found")
+	}
+
+	if _, err = tx.Exec(`DELETE FROM workout_split_muscles WHERE split_id = $1`, splitID); err != nil {
+		return err
+	}
+	for _, mID := range muscleIDs {
+		if _, err = tx.Exec(`
+			INSERT INTO workout_split_muscles (split_id, muscle_group_id)
+			SELECT $1, $2
+			WHERE EXISTS (SELECT 1 FROM workout_muscle_groups WHERE id = $2 AND user_id = $3)`,
+			splitID, mID, userID,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ── Sessions ───────────────────────────────────────────────────────────────

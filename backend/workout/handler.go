@@ -37,6 +37,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Put("/api/workout/schedule/{day}", h.SetScheduleDay)
 
 	r.Get("/api/workout/stats", h.GetStats)
+
+	r.Get("/api/workout/splits", h.ListSplits)
+	r.Post("/api/workout/splits", h.AddSplit)
+	r.Put("/api/workout/splits/{id}", h.UpdateSplit)
+	r.Delete("/api/workout/splits/{id}", h.DeleteSplit)
+	r.Put("/api/workout/splits/{id}/muscles", h.SetSplitMuscles)
 }
 
 // ── Muscles ────────────────────────────────────────────────────────────────
@@ -232,6 +238,94 @@ func (h *Handler) SetScheduleDay(w http.ResponseWriter, r *http.Request) {
 		req.MuscleIDs = []int64{}
 	}
 	if err := h.store.SetScheduleDay(userID, day, req.MuscleIDs); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Splits ─────────────────────────────────────────────────────────────────
+
+func (h *Handler) ListSplits(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	splits, err := h.store.ListSplits(userID)
+	if err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	respond.JSON(w, splits)
+}
+
+func (h *Handler) AddSplit(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	sp, err := h.store.AddSplit(userID, req.Name)
+	if err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	respond.Created(w, sp)
+}
+
+func (h *Handler) UpdateSplit(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.UpdateSplit(userID, id, req.Name); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteSplit(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteSplit(userID, id); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) SetSplitMuscles(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		MuscleIDs []int64 `json:"muscle_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.MuscleIDs == nil {
+		req.MuscleIDs = []int64{}
+	}
+	if err := h.store.SetSplitMuscles(userID, id, req.MuscleIDs); err != nil {
 		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}

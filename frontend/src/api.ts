@@ -99,6 +99,13 @@ export const api = {
     stats: {
       get: (): Promise<Response | undefined> => request("/api/workout/stats"),
     },
+    splits: {
+      list: (): Promise<Response | undefined> => request("/api/workout/splits"),
+      add: (name: string): Promise<Response | undefined> => request("/api/workout/splits", { method: "POST", body: JSON.stringify({ name }) }),
+      update: (id: number, name: string): Promise<Response | undefined> => request(`/api/workout/splits/${id}`, { method: "PUT", body: JSON.stringify({ name }) }),
+      delete: (id: number): Promise<Response | undefined> => request(`/api/workout/splits/${id}`, { method: "DELETE" }),
+      setMuscles: (id: number, muscleIds: number[]): Promise<Response | undefined> => request(`/api/workout/splits/${id}/muscles`, { method: "PUT", body: JSON.stringify({ muscle_ids: muscleIds }) }),
+    },
   },
 
   day: {

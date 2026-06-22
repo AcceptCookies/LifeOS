@@ -49,6 +49,12 @@ interface WorkoutSession {
   notes?: string;
 }
 
+interface Split {
+  id: number;
+  name: string;
+  muscle_ids: number[];
+}
+
 interface WeeklySession {
   week_start: string;
   count: number;
@@ -77,6 +83,7 @@ export default function WorkoutPage(): JSX.Element {
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [schedule, setSchedule] = useState<Schedule>({});
   const [stats, setStats] = useState<WorkoutStats | null>(null);
+  const [splits, setSplits] = useState<Split[]>([]);
   const [tab, setTab] = useState("log");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -97,19 +104,21 @@ export default function WorkoutPage(): JSX.Element {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const [mRes, sRes, schRes, stRes] = await Promise.all([
+      const [mRes, sRes, schRes, stRes, spRes] = await Promise.all([
         api.workout.muscles.list(),
         api.workout.sessions.list(),
         api.workout.schedule.get(),
         api.workout.stats.get(),
+        api.workout.splits.list(),
       ]);
-      const [m, s, sch, st] = await Promise.all([
-        mRes!.json(), sRes!.json(), schRes!.json(), stRes!.json(),
+      const [m, s, sch, st, sp] = await Promise.all([
+        mRes!.json(), sRes!.json(), schRes!.json(), stRes!.json(), spRes!.json(),
       ]);
       setMuscles(m);
       setSessions(s);
       setSchedule(sch);
       setStats(st);
+      setSplits(sp);
 
       // Init today's form from saved session
       const today = todayStr();
@@ -233,6 +242,7 @@ export default function WorkoutPage(): JSX.Element {
             muscles={muscles}
             sessions={sessions}
             schedule={schedule}
+            splits={splits}
             todayMuscles={todayMuscles}
             todayExercises={todayExercises}
             todayNotes={todayNotes}
@@ -258,7 +268,7 @@ export default function WorkoutPage(): JSX.Element {
           <StatsTab stats={stats} muscles={muscles} />
         )}
         {tab === "manage" && (
-          <ManageTab muscles={muscles} onReload={load} showToast={showToast} />
+          <ManageTab muscles={muscles} splits={splits} onReload={load} showToast={showToast} />
         )}
         {toast && <div style={S.toast}>{toast}</div>}
       </div>
@@ -272,6 +282,7 @@ interface LogTabProps {
   muscles: MuscleGroup[];
   sessions: WorkoutSession[];
   schedule: Schedule;
+  splits: Split[];
   todayMuscles: Set<number>;
   todayExercises: Record<number, ExerciseInputValue>;
   todayNotes: string;
@@ -285,7 +296,7 @@ interface LogTabProps {
   onReload: () => void;
 }
 
-function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, todayNotes, setTodayNotes, toggleMuscle, setExField, saveToday, saving, saveState, muscleMap, onReload }: LogTabProps): JSX.Element {
+function LogTab({ muscles, sessions, schedule, splits, todayMuscles, todayExercises, todayNotes, setTodayNotes, toggleMuscle, setExField, saveToday, saving, saveState, muscleMap, onReload }: LogTabProps): JSX.Element {
   const today = todayStr();
   const dow = todayDow();
   const plannedToday = schedule[dow] || [];
@@ -298,6 +309,15 @@ function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, tod
     });
   }
 
+  function applySplit(split: Split): void {
+    const allSelected = split.muscle_ids.every((id) => todayMuscles.has(id));
+    split.muscle_ids.forEach((id) => {
+      const has = todayMuscles.has(id);
+      if (allSelected && has) toggleMuscle(id);
+      else if (!allSelected && !has) toggleMuscle(id);
+    });
+  }
+
   return (
     <>
       {importBlueprint && <ImportModal blueprint={importBlueprint} onClose={() => setImportBlueprint(null)} onSuccess={onReload} />}
@@ -306,6 +326,24 @@ function LogTab({ muscles, sessions, schedule, todayMuscles, todayExercises, tod
         <div style={S.planHint}>
           <span style={S.planHintText}>Podľa plánu dnes: <strong>{muscleNamesPlanned.join(", ")}</strong></span>
           <button style={S.planHintBtn} onClick={applyPlan}>Použiť</button>
+        </div>
+      )}
+
+      {/* Split quick-select */}
+      {splits.length > 0 && (
+        <div style={S.splitRow}>
+          {splits.map((sp) => {
+            const allSelected = sp.muscle_ids.length > 0 && sp.muscle_ids.every((id) => todayMuscles.has(id));
+            return (
+              <button
+                key={sp.id}
+                style={{ ...S.splitBtn, ...(allSelected ? S.splitBtnActive : {}) }}
+                onClick={() => applySplit(sp)}
+              >
+                {sp.name}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -635,6 +673,7 @@ function StatsTab({ stats, muscles }: StatsTabProps): JSX.Element {
 
 interface ManageTabProps {
   muscles: MuscleGroup[];
+  splits: Split[];
   onReload: () => void;
   showToast: (msg: string) => void;
 }
@@ -644,7 +683,7 @@ interface EditingItem {
   name: string;
 }
 
-function ManageTab({ muscles, onReload, showToast }: ManageTabProps): JSX.Element {
+function ManageTab({ muscles, splits, onReload, showToast }: ManageTabProps): JSX.Element {
   const [expandedMuscle, setExpandedMuscle] = useState<number | null>(null);
   const [editingMuscle, setEditingMuscle] = useState<EditingItem | null>(null);
   const [newMuscle, setNewMuscle] = useState("");
@@ -653,6 +692,52 @@ function ManageTab({ muscles, onReload, showToast }: ManageTabProps): JSX.Elemen
   const [addingExerciseTo, setAddingExerciseTo] = useState<number | null>(null);
   const [newExercise, setNewExercise] = useState("");
   const [importBlueprint, setImportBlueprint] = useState<Blueprint | null>(null);
+
+  // Split state
+  const [expandedSplit, setExpandedSplit] = useState<number | null>(null);
+  const [editingSplit, setEditingSplit] = useState<EditingItem | null>(null);
+  const [newSplit, setNewSplit] = useState("");
+  const [addingSplit, setAddingSplit] = useState(false);
+
+  async function addSplit(): Promise<void> {
+    if (!newSplit.trim()) return;
+    try {
+      await api.workout.splits.add(newSplit.trim());
+      setNewSplit("");
+      setAddingSplit(false);
+      await onReload();
+      showToast("Split pridaný");
+    } catch { /* keep form open */ }
+  }
+
+  async function saveSplit(): Promise<void> {
+    if (!editingSplit?.name.trim()) return;
+    try {
+      await api.workout.splits.update(editingSplit.id, editingSplit.name.trim());
+      setEditingSplit(null);
+      await onReload();
+      showToast("Split uložený");
+    } catch { /* keep editing open */ }
+  }
+
+  async function deleteSplit(id: number): Promise<void> {
+    try {
+      await api.workout.splits.delete(id);
+      if (expandedSplit === id) setExpandedSplit(null);
+      await onReload();
+      showToast("Split vymazaný");
+    } catch { await onReload(); }
+  }
+
+  async function toggleSplitMuscle(splitId: number, muscleId: number, currentIds: number[]): Promise<void> {
+    const next = currentIds.includes(muscleId)
+      ? currentIds.filter((id) => id !== muscleId)
+      : [...currentIds, muscleId];
+    try {
+      await api.workout.splits.setMuscles(splitId, next);
+      await onReload();
+    } catch { await onReload(); }
+  }
 
   async function addMuscle(): Promise<void> {
     if (!newMuscle.trim()) return;
@@ -735,6 +820,98 @@ function ManageTab({ muscles, onReload, showToast }: ManageTabProps): JSX.Elemen
           onSuccess={onReload}
         />
       )}
+
+      {/* ── Splits section ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ ...S.sectionTitle, marginBottom: 0 }}>Splity (kombá)</div>
+      </div>
+      {splits.length === 0 && <div style={{ ...S.empty, marginBottom: 12 }}>Zatiaľ žiadne splity</div>}
+
+      {splits.map((sp) => {
+        const isExpanded = expandedSplit === sp.id;
+        const isEditingThis = editingSplit?.id === sp.id;
+        return (
+          <div key={sp.id} style={S.muscleBlock}>
+            <div style={S.muscleHeader}>
+              {isEditingThis ? (
+                <input
+                  style={{ ...S.inlineInput, flex: 1 }}
+                  value={editingSplit!.name}
+                  autoFocus
+                  onChange={(e) => setEditingSplit({ ...editingSplit!, name: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveSplit(); if (e.key === "Escape") setEditingSplit(null); }}
+                />
+              ) : (
+                <button style={S.muscleToggle} onClick={() => setExpandedSplit(isExpanded ? null : sp.id)}>
+                  <span style={S.muscleToggleIcon}>{isExpanded ? "▾" : "▸"}</span>
+                  <span>{sp.name}</span>
+                  {sp.muscle_ids.length > 0 && (
+                    <span style={S.exCountSmall}>{sp.muscle_ids.length} part.</span>
+                  )}
+                </button>
+              )}
+              <div style={S.rowActions}>
+                {isEditingThis ? (
+                  <>
+                    <button style={S.actionBtnGreen} onClick={saveSplit}>Uložiť</button>
+                    <button style={S.actionBtn} onClick={() => setEditingSplit(null)}>Zrušiť</button>
+                  </>
+                ) : (
+                  <>
+                    <button style={S.actionBtn} onClick={() => setEditingSplit({ id: sp.id, name: sp.name })}>Upraviť</button>
+                    <button style={S.actionBtnRed} onClick={() => deleteSplit(sp.id)}>Zmazať</button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div style={S.exerciseList}>
+                <div style={{ fontSize: 11, color: "#3a3a3a", marginBottom: 8, letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: MONO }}>Partie v splite</div>
+                {muscles.length === 0 && <div style={S.emptyExercise}>Najprv pridaj partie</div>}
+                {muscles.map((m) => {
+                  const checked = sp.muscle_ids.includes(m.id);
+                  return (
+                    <label key={m.id} style={{ ...S.exerciseRow, cursor: "pointer", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSplitMuscle(sp.id, m.id, sp.muscle_ids)}
+                        style={{ accentColor: "#ef4444", width: 16, height: 16, flexShrink: 0 }}
+                      />
+                      <span style={{ ...S.exerciseName, color: checked ? "#ef4444" : "#666" }}>{m.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {addingSplit ? (
+        <div style={{ display: "flex", gap: 6, marginTop: 8, marginBottom: 24, alignItems: "center" }}>
+          <input
+            style={{ ...S.inlineInput, flex: 1 }}
+            placeholder="Názov splitu (napr. Push, Pull, Nohy)..."
+            value={newSplit}
+            autoFocus
+            onChange={(e) => setNewSplit(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addSplit();
+              if (e.key === "Escape") { setAddingSplit(false); setNewSplit(""); }
+            }}
+          />
+          <button style={S.actionBtnGreen} onClick={addSplit}>Pridať</button>
+          <button style={S.actionBtn} onClick={() => { setAddingSplit(false); setNewSplit(""); }}>Zrušiť</button>
+        </div>
+      ) : (
+        <button style={{ ...S.addMuscleBtn, marginBottom: 24 }} onClick={() => { setAddingSplit(true); setNewSplit(""); }}>
+          + Pridať split
+        </button>
+      )}
+
+      {/* ── Muscles & exercises section ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ ...S.sectionTitle, marginBottom: 0 }}>Partie a cviky</div>
         <div style={{ display: "flex", gap: 5 }}>
@@ -1193,5 +1370,30 @@ const S: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     textTransform: "uppercase",
     transition: "border-color 0.2s, color 0.2s",
+  },
+
+  // Split quick-select
+  splitRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 6,
+    marginBottom: 16,
+  },
+  splitBtn: {
+    background: "none",
+    border: "1px solid #222",
+    borderRadius: 20,
+    color: "#555",
+    fontSize: 12,
+    fontWeight: 600,
+    padding: "6px 14px",
+    cursor: "pointer",
+    letterSpacing: "0.03em",
+    transition: "all 0.15s",
+  },
+  splitBtnActive: {
+    background: "#160e0e",
+    border: "1px solid #ef444440",
+    color: "#ef4444",
   },
 };
