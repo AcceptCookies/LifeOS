@@ -547,6 +547,18 @@ func (s *Store) GetNotesByDate(userID int64, date string) (string, error) {
 	return notes, nil
 }
 
+func (s *Store) GetSessionIDByDate(userID int64, date string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT id FROM workout_sessions WHERE user_id = $1 AND to_char(date, 'YYYY-MM-DD') = $2`,
+		userID, date,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
 // ── Stats ──────────────────────────────────────────────────────────────────
 
 // UpsertMuscle inserts a muscle group if one with the same name doesn't already exist for the user.

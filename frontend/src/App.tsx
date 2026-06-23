@@ -317,6 +317,7 @@ interface DayData {
   muscles?: string[];
   workout_notes?: string;
   cooked_recipes?: string[];
+  session_id?: number;
 }
 
 interface DayModalProps {
@@ -361,10 +362,11 @@ function DayModal({ date, onClose, onSaved }: DayModalProps): JSX.Element {
   }
 
   async function handleDelete(): Promise<void> {
-    if (!confirm(`Vymazať záznamy návykov pre ${formatDateSK(date)}?`)) return;
+    if (!confirm(`Vymazať záznamy pre ${formatDateSK(date)}?`)) return;
     setDeleting(true);
     try {
       await api.habits.delete(date);
+      if (data?.session_id) await api.workout.sessions.delete(data.session_id);
       onSaved();
       onClose();
     } catch { /* keep open */ } finally { setDeleting(false); }
@@ -379,6 +381,7 @@ function DayModal({ date, onClose, onSaved }: DayModalProps): JSX.Element {
     try {
       await api.habits.save(moveDate, body);
       await api.habits.delete(date);
+      if (data?.session_id) await api.workout.sessions.move(data.session_id, moveDate);
       onSaved();
       onClose();
     } catch { /* keep open */ } finally { setMoving(false); }

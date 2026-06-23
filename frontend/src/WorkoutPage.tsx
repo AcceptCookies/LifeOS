@@ -380,10 +380,14 @@ function LogTab({ muscles, sessions, schedule, splits, todayMuscles, todayExerci
 
   async function confirmMove(id: number): Promise<void> {
     if (!moveDate) return;
-    await api.workout.sessions.move(id, moveDate);
-    setMovingId(null);
-    setMoveDate("");
-    onReload();
+    try {
+      await api.workout.sessions.move(id, moveDate);
+      setMovingId(null);
+      setMoveDate("");
+      onReload();
+    } catch {
+      alert("Presun sa nepodaril – na tento deň už existuje tréning.");
+    }
   }
 
   function applyPlan(): void {

@@ -166,6 +166,7 @@ func main() {
 			muscles, _ := workoutStore.GetMuscleNamesByDate(userID, date)
 			workoutNotes, _ := workoutStore.GetNotesByDate(userID, date)
 			cookedRecipes, _ := recipesStore.GetCookedByDate(userID, date)
+			sessionID, _ := workoutStore.GetSessionIDByDate(userID, date)
 
 			type DaySummary struct {
 				Date          string   `json:"date"`
@@ -173,6 +174,7 @@ func main() {
 				Muscles       []string `json:"muscles"`
 				WorkoutNotes  string   `json:"workout_notes"`
 				CookedRecipes []string `json:"cooked_recipes"`
+				SessionID     int64    `json:"session_id,omitempty"`
 			}
 
 			respond.JSON(w, DaySummary{
@@ -181,6 +183,7 @@ func main() {
 				Muscles:       muscles,
 				WorkoutNotes:  workoutNotes,
 				CookedRecipes: cookedRecipes,
+				SessionID:     sessionID,
 			})
 		})
 	})
