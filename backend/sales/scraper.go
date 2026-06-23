@@ -48,6 +48,7 @@ type ScrapedItem struct {
 	Discount  *int
 	ValidFrom *time.Time
 	ValidTo   *time.Time
+	Location  *string
 }
 
 // httpClient is shared across all scrape calls (reuses connections, enforces redirect policy).
@@ -206,9 +207,22 @@ func extractCard(card *html.Node, fixedStore string) *ScrapedItem {
 		item.Discount = parseDiscount(textContent(disc))
 	}
 
-	// ── Validity ──
+	// ── Validity + location ──
 	if vd := findFirst(card, byClass("validity-info")); vd != nil {
-		item.ValidFrom, item.ValidTo = parseDateRange(textContent(vd))
+		full := textContent(vd)
+		item.ValidFrom, item.ValidTo = parseDateRange(full)
+		item.Location = extractLocation(full)
+	}
+	// Some cards carry location in a dedicated element.
+	if item.Location == nil {
+		for _, cls := range []string{"store-info", "branch-info", "location-info", "predajne"} {
+			if el := findFirst(card, byClass(cls)); el != nil {
+				if loc := extractLocation(textContent(el)); loc != nil {
+					item.Location = loc
+					break
+				}
+			}
+		}
 	}
 
 	// Drop cards with no price at all — they carry no useful data.
@@ -311,6 +325,41 @@ func parseDateRange(s string) (*time.Time, *time.Time) {
 	}
 
 	return parse(m[1], m[2], fromYear), parse(m[4], m[5], toYear)
+}
+
+// extractLocation parses location/branch restrictions from a validity-info text.
+// It strips the date range and returns the remaining text if it contains
+// store/city keywords that indicate the deal is branch-specific.
+// Returns nil when no location restriction is found.
+func extractLocation(raw string) *string {
+	// Remove the date range portion, leaving only extra text.
+	rest := strings.TrimSpace(reDateRange.ReplaceAllString(raw, ""))
+	// Strip leading punctuation and filler characters.
+	rest = strings.Trim(rest, " ,;.–-|/\\")
+	rest = strings.Join(strings.Fields(rest), " ")
+
+	if rest == "" {
+		return nil
+	}
+
+	// Look for keywords that signal a branch/city restriction.
+	lower := strings.ToLower(rest)
+	keywords := []string{
+		"predajn", // predajňa, predajne, predajniach
+		"pobočk",  // pobočka, pobočke
+		"vybrané", "vybraných", "vybrany",
+		"iba v", "len v", "platí v", "plati v",
+		// Slovak city names worth detecting
+		"martin", "žilina", "zilina", "bratislava", "košice", "kosice",
+		"prešov", "presov", "nitra", "trnava", "trenčín", "trencin",
+		"banská", "banska", "poprad", "zvolen", "liptov",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return &rest
+		}
+	}
+	return nil
 }
 
 // ── HTML traversal helpers ────────────────────────────────────────────────────

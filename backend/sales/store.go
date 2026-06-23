@@ -17,6 +17,7 @@ type SaleItem struct {
 	Discount  *int     `json:"discount"`
 	ValidFrom *string  `json:"valid_from"`
 	ValidTo   *string  `json:"valid_to"`
+	Location  *string  `json:"location"`
 	ScrapedAt string   `json:"scraped_at"`
 }
 
@@ -30,7 +31,7 @@ func NewStore(db *sql.DB) *Store {
 }
 
 // BulkInsert writes scraped items in one transaction.
-// Duplicate rows (same store + name + date range) are silently skipped via ON CONFLICT.
+// On duplicate (same store+name+dates) the location is updated.
 func (s *Store) BulkInsert(items []ScrapedItem) error {
 	if len(items) == 0 {
 		return nil
@@ -48,9 +49,12 @@ func (s *Store) BulkInsert(items []ScrapedItem) error {
 	}()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO sale_items (store, name, price, orig_price, discount, valid_from, valid_to)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT DO NOTHING
+		INSERT INTO sale_items (store, name, price, orig_price, discount, valid_from, valid_to, location)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (store, lower(name),
+		             COALESCE(valid_from, '1970-01-01'::date),
+		             COALESCE(valid_to,   '1970-01-01'::date))
+		DO UPDATE SET location = EXCLUDED.location, scraped_at = NOW()
 	`)
 	if err != nil {
 		_ = tx.Rollback()
@@ -63,7 +67,7 @@ func (s *Store) BulkInsert(items []ScrapedItem) error {
 		res, err := stmt.Exec(
 			item.Store, item.Name,
 			item.Price, item.OrigPrice, item.Discount,
-			item.ValidFrom, item.ValidTo,
+			item.ValidFrom, item.ValidTo, item.Location,
 		)
 		if err != nil {
 			_ = tx.Rollback()
@@ -89,6 +93,7 @@ func (s *Store) Search(query string) ([]SaleItem, error) {
 		SELECT id, store, name, price, orig_price, discount,
 		       to_char(valid_from, 'YYYY-MM-DD'),
 		       to_char(valid_to,   'YYYY-MM-DD'),
+		       location,
 		       to_char(scraped_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM sale_items
 		WHERE lower(name) LIKE '%' || lower($1) || '%'
@@ -110,6 +115,7 @@ func (s *Store) Featured() ([]SaleItem, error) {
 		SELECT id, store, name, price, orig_price, discount,
 		       to_char(valid_from, 'YYYY-MM-DD'),
 		       to_char(valid_to,   'YYYY-MM-DD'),
+		       location,
 		       to_char(scraped_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM sale_items
 		WHERE (valid_to >= CURRENT_DATE OR valid_to IS NULL)
@@ -129,6 +135,7 @@ func (s *Store) History(query string) ([]SaleItem, error) {
 		SELECT id, store, name, price, orig_price, discount,
 		       to_char(valid_from, 'YYYY-MM-DD'),
 		       to_char(valid_to,   'YYYY-MM-DD'),
+		       location,
 		       to_char(scraped_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM sale_items
 		WHERE lower(name) LIKE '%' || lower($1) || '%'
@@ -159,11 +166,11 @@ func scanItems(rows *sql.Rows) ([]SaleItem, error) {
 	var items []SaleItem
 	for rows.Next() {
 		var it SaleItem
-		var vf, vt, sa sql.NullString
+		var vf, vt, loc, sa sql.NullString
 		if err := rows.Scan(
 			&it.ID, &it.Store, &it.Name,
 			&it.Price, &it.OrigPrice, &it.Discount,
-			&vf, &vt, &sa,
+			&vf, &vt, &loc, &sa,
 		); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
@@ -172,6 +179,9 @@ func scanItems(rows *sql.Rows) ([]SaleItem, error) {
 		}
 		if vt.Valid {
 			it.ValidTo = &vt.String
+		}
+		if loc.Valid {
+			it.Location = &loc.String
 		}
 		it.ScrapedAt = sa.String
 		items = append(items, it)

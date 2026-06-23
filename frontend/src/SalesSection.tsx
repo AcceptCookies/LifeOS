@@ -19,7 +19,25 @@ interface SaleItem {
   discount: number | null;
   valid_from: string | null;
   valid_to: string | null;
+  location: string | null;
   scraped_at: string;
+}
+
+const HOME_CITY = "martin";
+
+function locationForCity(loc: string | null): "home" | "other" | null {
+  if (!loc) return null;
+  return loc.toLowerCase().includes(HOME_CITY) ? "home" : "other";
+}
+
+// Sort: Martin-specific first, then nationwide (no location), then other cities last.
+function sortByLocation(items: SaleItem[]): SaleItem[] {
+  return [...items].sort((a, b) => {
+    const la = locationForCity(a.location);
+    const lb = locationForCity(b.location);
+    const rank = (l: "home" | "other" | null) => l === "home" ? 0 : l === null ? 1 : 2;
+    return rank(la) - rank(lb);
+  });
 }
 
 function fmtPrice(p: number | null): string {
@@ -168,7 +186,7 @@ export default function SalesSection() {
     return arr.filter(it => it.store === filterStore);
   }
 
-  const displayItems = query ? filterItems(items) : filterItems(featured);
+  const displayItems = sortByLocation(query ? filterItems(items) : filterItems(featured));
   const isSearchMode = !!query;
 
   // Group by store for featured view
@@ -310,6 +328,7 @@ function SaleCard({ item, onHistory }: SaleCardProps) {
   const c = STORE_COLORS[item.store] || "#888";
   const days = daysLeft(item.valid_to);
   const urgent = days != null && days <= 2;
+  const locType = locationForCity(item.location);
 
   return (
     <div style={C.card}>
@@ -335,6 +354,19 @@ function SaleCard({ item, onHistory }: SaleCardProps) {
         <div style={{ ...C.validity, color: urgent ? "#f97316" : "#555" }}>
           {fmtDate(item.valid_from)}–{item.valid_to ? fmtDate(item.valid_to) + item.valid_to.slice(0, 4) : ""}
           {days != null && <span style={C.daysLeft}>{days <= 0 ? "dnes posledný" : `${days}d`}</span>}
+        </div>
+      )}
+
+      {/* Location badge — shown only when the deal is branch-specific */}
+      {item.location && (
+        <div style={{
+          ...C.locationBadge,
+          ...(locType === "home"
+            ? { color: "#22c55e", borderColor: "#22c55e40" }
+            : { color: "#f97316", borderColor: "#f9741640" }),
+        }}>
+          {locType === "home" ? "📍 " : "⚠️ "}
+          {item.location}
         </div>
       )}
 
@@ -521,6 +553,15 @@ const C: Record<string, React.CSSProperties> = {
   },
   daysLeft: {
     color: "#555",
+  },
+  locationBadge: {
+    fontSize: 10,
+    fontFamily: MONO,
+    border: "1px solid",
+    borderRadius: 4,
+    padding: "2px 6px",
+    lineHeight: 1.4,
+    wordBreak: "break-word" as const,
   },
   histBtn: {
     background: "none",
