@@ -9,6 +9,20 @@ const MONTHS_SK = ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "s
 const DAYS_SK = ["Pondelok", "Utorok", "Streda", "Štvrtok", "Piatok", "Sobota", "Nedeľa"];
 const DAYS_SHORT = ["Po", "Ut", "St", "Št", "Pi", "So", "Ne"];
 
+const COMBO_KEY = "wo_combo_v1";
+
+function initComboGroups(muscles: MuscleGroup[], saved: number[][]): number[][] {
+  const validIds = new Set(muscles.map(m => m.id));
+  let groups = saved
+    .map(g => g.filter(id => validIds.has(id)))
+    .filter(g => g.length > 0);
+  const covered = new Set(groups.flat());
+  for (const m of muscles) {
+    if (!covered.has(m.id)) groups.push([m.id]);
+  }
+  return groups.length > 0 ? groups : muscles.map(m => [m.id]);
+}
+
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -302,6 +316,75 @@ function LogTab({ muscles, sessions, schedule, splits, todayMuscles, todayExerci
   const plannedToday = schedule[dow] || [];
   const muscleNamesPlanned = plannedToday.map((id) => muscleMap[id]).filter(Boolean);
   const [importBlueprint, setImportBlueprint] = useState<Blueprint | null>(null);
+  const [movingId, setMovingId] = useState<number | null>(null);
+  const [moveDate, setMoveDate] = useState("");
+
+  // Combo groups
+  const [comboGroups, setComboGroups] = useState<number[][]>([]);
+  const [editingCombos, setEditingCombos] = useState(false);
+  const [mergingFrom, setMergingFrom] = useState<number | null>(null);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (muscles.length === 0) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(COMBO_KEY) || "[]") as number[][];
+      setComboGroups(initComboGroups(muscles, saved));
+    } catch {
+      setComboGroups(muscles.map(m => [m.id]));
+    }
+  }, [muscles]);
+
+  function saveComboGroups(groups: number[][]): void {
+    setComboGroups(groups);
+    localStorage.setItem(COMBO_KEY, JSON.stringify(groups));
+  }
+
+  function doMerge(from: number, to: number): void {
+    if (from === to) return;
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const next = comboGroups.map(g => [...g]);
+    next[lo] = [...next[lo], ...next[hi]];
+    next.splice(hi, 1);
+    saveComboGroups(next);
+    setMergingFrom(null);
+  }
+
+  function doSplit(idx: number): void {
+    const group = comboGroups[idx];
+    if (group.length <= 1) return;
+    const next = [...comboGroups];
+    next.splice(idx, 1, ...group.map(id => [id]));
+    saveComboGroups(next);
+  }
+
+  function handleComboTap(idx: number, group: number[]): void {
+    if (editingCombos) {
+      if (mergingFrom === null) setMergingFrom(idx);
+      else if (mergingFrom === idx) setMergingFrom(null);
+      else doMerge(mergingFrom, idx);
+    } else {
+      const allSel = group.every(id => todayMuscles.has(id));
+      group.forEach(id => {
+        if (allSel ? todayMuscles.has(id) : !todayMuscles.has(id)) toggleMuscle(id);
+      });
+    }
+  }
+
+  async function deleteSession(id: number): Promise<void> {
+    await api.workout.sessions.delete(id);
+    onReload();
+  }
+
+  async function confirmMove(id: number): Promise<void> {
+    if (!moveDate) return;
+    await api.workout.sessions.move(id, moveDate);
+    setMovingId(null);
+    setMoveDate("");
+    onReload();
+  }
 
   function applyPlan(): void {
     plannedToday.forEach((id) => {
@@ -329,7 +412,82 @@ function LogTab({ muscles, sessions, schedule, splits, todayMuscles, todayExerci
         </div>
       )}
 
-      {/* Split quick-select */}
+      {/* Combo bar */}
+      {comboGroups.length > 0 && (
+        <div style={S.comboBar}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, flex: 1 }}>
+            {comboGroups.map((group, idx) => {
+              const allSel = group.length > 0 && group.every(id => todayMuscles.has(id));
+              const someSel = !allSel && group.some(id => todayMuscles.has(id));
+              const isMergingThis = editingCombos && mergingFrom === idx;
+              const isTarget = editingCombos && mergingFrom !== null && mergingFrom !== idx;
+              const isDragTarget = dragOver === idx && dragFrom !== null && dragFrom !== idx;
+              const isDragging = dragFrom === idx;
+              const label = group.map(id => muscleMap[id]).filter(Boolean).join(" + ");
+              return (
+                <div
+                  key={idx}
+                  draggable={editingCombos}
+                  onDragStart={editingCombos ? () => setDragFrom(idx) : undefined}
+                  onDragOver={editingCombos ? (e) => { e.preventDefault(); setDragOver(idx); } : undefined}
+                  onDrop={editingCombos ? (e) => { e.preventDefault(); if (dragFrom !== null) { doMerge(dragFrom, idx); } setDragFrom(null); setDragOver(null); } : undefined}
+                  onDragEnd={editingCombos ? () => { setDragFrom(null); setDragOver(null); } : undefined}
+                  onClick={() => handleComboTap(idx, group)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "5px 12px",
+                    borderRadius: 20,
+                    border: isDragTarget || isMergingThis
+                      ? "1px solid #ef4444"
+                      : isTarget
+                      ? "1px dashed #ef444450"
+                      : allSel
+                      ? "1px solid #ef444440"
+                      : "1px solid #222",
+                    background: isMergingThis ? "#1a0a0a" : allSel ? "#160e0e" : "none",
+                    opacity: isDragging ? 0.4 : 1,
+                    cursor: editingCombos ? "grab" : "pointer",
+                    userSelect: "none" as const,
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <span style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: allSel ? "#ef4444" : someSel ? "#ef444480" : "#555",
+                    letterSpacing: "0.03em",
+                  }}>
+                    {label}
+                  </span>
+                  {editingCombos && group.length > 1 && (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); doSplit(idx); }}
+                      style={{ fontSize: 14, color: "#555", cursor: "pointer", paddingLeft: 4, lineHeight: 1 }}
+                    >×</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => { setEditingCombos(e => !e); setMergingFrom(null); setDragFrom(null); setDragOver(null); }}
+            style={{
+              ...S.actionBtn,
+              flexShrink: 0,
+              alignSelf: "flex-start",
+              ...(editingCombos ? { borderColor: "#ef444440", color: "#ef4444", background: "#0e0a0a" } : {}),
+            }}
+          >
+            {editingCombos
+              ? (mergingFrom !== null ? "Vyber cieľ" : "Hotovo")
+              : "Kombá ✎"}
+          </button>
+        </div>
+      )}
+
+      {/* Named splits quick-select */}
       {splits.length > 0 && (
         <div style={S.splitRow}>
           {splits.map((sp) => {
@@ -469,7 +627,31 @@ function LogTab({ muscles, sessions, schedule, splits, todayMuscles, todayExerci
                       ))
                   }
                 </div>
+                <div style={{ display: "flex", gap: 5, marginLeft: "auto", flexShrink: 0 }}>
+                  <button
+                    style={S.histActionBtn}
+                    onClick={() => { setMovingId(sess.id); setMoveDate(sess.date); }}
+                    title="Presunúť na iný deň"
+                  >↕</button>
+                  <button
+                    style={{ ...S.histActionBtn, color: "#ef4444" }}
+                    onClick={() => deleteSession(sess.id)}
+                    title="Zmazať"
+                  >×</button>
+                </div>
               </div>
+              {movingId === sess.id && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                  <input
+                    type="date"
+                    value={moveDate}
+                    onChange={(e) => setMoveDate(e.target.value)}
+                    style={{ ...S.exInput, width: "auto", flex: 1 }}
+                  />
+                  <button style={S.actionBtnGreen} onClick={() => confirmMove(sess.id)}>OK</button>
+                  <button style={S.actionBtn} onClick={() => setMovingId(null)}>Zrušiť</button>
+                </div>
+              )}
               {sess.exercises && sess.exercises.length > 0 && (
                 <div style={S.histExercises}>
                   {sess.exercises.map((ex) => {
@@ -1233,6 +1415,16 @@ const S: Record<string, React.CSSProperties> = {
   histExercises: { display: "flex", flexWrap: "wrap", gap: 5 },
   histEx: { fontSize: 11, color: "#555", fontFamily: MONO, background: "#111", borderRadius: 3, padding: "1px 6px" },
   histNotes: { fontSize: 12, color: "#555", fontStyle: "italic" },
+  histActionBtn: {
+    background: "none",
+    border: "1px solid #2a2a2a",
+    borderRadius: 4,
+    color: "#555",
+    fontSize: 13,
+    cursor: "pointer",
+    padding: "1px 7px",
+    lineHeight: "18px",
+  },
 
   // Plan tab
   dayGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 16 },
@@ -1373,6 +1565,13 @@ const S: Record<string, React.CSSProperties> = {
   },
 
   // Split quick-select
+  comboBar: {
+    display: "flex",
+    gap: 10,
+    marginBottom: 14,
+    alignItems: "flex-start",
+  },
+
   splitRow: {
     display: "flex",
     flexWrap: "wrap" as const,

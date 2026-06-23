@@ -32,6 +32,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 	r.Get("/api/workout/sessions", h.ListSessions)
 	r.Post("/api/workout/sessions", h.SaveSession)
+	r.Delete("/api/workout/sessions/{id}", h.DeleteSession)
+	r.Patch("/api/workout/sessions/{id}", h.MoveSession)
 
 	r.Get("/api/workout/schedule", h.GetSchedule)
 	r.Put("/api/workout/schedule/{day}", h.SetScheduleDay)
@@ -202,6 +204,41 @@ func (h *Handler) SaveSession(w http.ResponseWriter, r *http.Request) {
 		req.Exercises = []SessionExercise{}
 	}
 	if err := h.store.UpsertSession(userID, req.Date, req.Notes, req.MuscleIDs, req.Exercises); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteSession(userID, id); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) MoveSession(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Date string `json:"date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Date == "" {
+		respond.Err(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.MoveSession(userID, id, req.Date); err != nil {
 		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}

@@ -385,6 +385,17 @@ func (s *Store) UpsertSession(userID int64, date, notes string, muscleIDs []int6
 	}
 	defer tx.Rollback()
 
+	// If nothing to save, delete the session entirely (deselecting all = removing the day).
+	if len(muscleIDs) == 0 && len(exercises) == 0 {
+		if _, err = tx.Exec(`
+			DELETE FROM workout_sessions WHERE user_id = $1 AND date = $2`,
+			userID, date,
+		); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
 	var sessionID int64
 	err = tx.QueryRow(`
 		INSERT INTO workout_sessions (user_id, date, notes) VALUES ($1, $2, $3)
@@ -422,6 +433,22 @@ func (s *Store) UpsertSession(userID int64, date, notes string, muscleIDs []int6
 	}
 
 	return tx.Commit()
+}
+
+func (s *Store) DeleteSession(userID, id int64) error {
+	_, err := s.db.Exec(
+		`DELETE FROM workout_sessions WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	)
+	return err
+}
+
+func (s *Store) MoveSession(userID, id int64, newDate string) error {
+	_, err := s.db.Exec(
+		`UPDATE workout_sessions SET date = $1 WHERE id = $2 AND user_id = $3`,
+		newDate, id, userID,
+	)
+	return err
 }
 
 // ── Schedule ───────────────────────────────────────────────────────────────

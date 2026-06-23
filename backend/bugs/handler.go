@@ -21,9 +21,12 @@ func NewHandler(store *Store) *Handler {
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/bugs", h.list)
+	r.Get("/api/bugs/trash", h.trash)
 	r.Post("/api/bugs", h.create)
 	r.Put("/api/bugs/{id}", h.update)
 	r.Delete("/api/bugs/{id}", h.delete)
+	r.Post("/api/bugs/{id}/restore", h.restore)
+	r.Delete("/api/bugs/{id}/hard", h.hardDelete)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +89,47 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Delete(userID, id); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) trash(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	bugs, err := h.store.ListTrash(userID)
+	if err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	if bugs == nil {
+		bugs = []Bug{}
+	}
+	respond.JSON(w, bugs)
+}
+
+func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.Restore(userID, id); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) hardDelete(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromCtx(r.Context())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respond.Err(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.HardDelete(userID, id); err != nil {
 		respond.Err(w, "db error", http.StatusInternalServerError)
 		return
 	}
