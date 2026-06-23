@@ -161,6 +161,34 @@ func (h *Handler) ByDate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ComputeStreaks computes streaks from a sorted-desc list of habit logs.
+func ComputeStreaks(entries []Log) map[string]int {
+	today := time.Now().Format(timeutil.DateFormat)
+	streaks := make(map[string]int)
+	for _, habit := range habitKeys {
+		start := today
+		if len(entries) == 0 || entries[0].Date != today {
+			d, _ := time.Parse(timeutil.DateFormat, today)
+			start = d.Add(-24 * time.Hour).Format(timeutil.DateFormat)
+		}
+		streak := 0
+		expected := start
+		for _, e := range entries {
+			if e.Date != expected {
+				break
+			}
+			if !habitValue(&e, habit) {
+				break
+			}
+			streak++
+			d, _ := time.Parse(timeutil.DateFormat, expected)
+			expected = d.Add(-24 * time.Hour).Format(timeutil.DateFormat)
+		}
+		streaks[habit] = streak
+	}
+	return streaks
+}
+
 func habitValue(e *Log, key string) bool {
 	switch key {
 	case "strength_training":

@@ -73,3 +73,43 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	respond.JSON(w, map[string]string{"token": token})
 }
+
+func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID := UserIDFromCtx(r.Context())
+	user, err := h.svc.store.GetUserByID(userID)
+	if err != nil || user == nil {
+		respond.Err(w, "not found", http.StatusNotFound)
+		return
+	}
+	respond.JSON(w, &PublicUser{ID: user.ID, Email: user.Email, Name: user.Name})
+}
+
+func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID := UserIDFromCtx(r.Context())
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Err(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.store.UpdateName(userID, req.Name); err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	user, _ := h.svc.store.GetUserByID(userID)
+	if user == nil {
+		respond.Err(w, "not found", http.StatusNotFound)
+		return
+	}
+	respond.JSON(w, &PublicUser{ID: user.ID, Email: user.Email, Name: user.Name})
+}
+
+func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.svc.store.ListUsers()
+	if err != nil {
+		respond.Err(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	respond.JSON(w, users)
+}

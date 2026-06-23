@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -78,6 +79,9 @@ func main() {
 	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(authSvc.Middleware)
+		r.Get("/api/profile", authHandler.GetProfile)
+		r.Put("/api/profile", authHandler.UpdateProfile)
+		r.Get("/api/users", authHandler.ListUsers)
 		r.HandleFunc("/api/today", habitsHandler.Today)
 		r.Get("/api/history", habitsHandler.History)
 		r.Get("/api/streaks", habitsHandler.Streaks)
@@ -88,6 +92,71 @@ func main() {
 		importHandler.RegisterRoutes(r)
 		bugsHandler.RegisterRoutes(r)
 		salesHandler.RegisterRoutes(r)
+
+		r.Get("/api/users/{id}", func(w http.ResponseWriter, req *http.Request) {
+			var targetID int64
+			if _, err := fmt.Sscan(chi.URLParam(req, "id"), &targetID); err != nil {
+				respond.Err(w, "invalid id", http.StatusBadRequest)
+				return
+			}
+
+			user, err := authStore.GetUserByID(targetID)
+			if err != nil || user == nil {
+				respond.Err(w, "user not found", http.StatusNotFound)
+				return
+			}
+
+			sessions, _ := workoutStore.ListSessions(targetID, 20)
+			if sessions == nil {
+				sessions = []workout.Session{}
+			}
+			muscles, _ := workoutStore.ListMuscles(targetID)
+			if muscles == nil {
+				muscles = []workout.MuscleGroup{}
+			}
+			stats, _ := workoutStore.GetStats(targetID)
+
+			habitHistory, _ := habitsStore.History(targetID, 90)
+			if habitHistory == nil {
+				habitHistory = []habits.Log{}
+			}
+			habitStreaks := habits.ComputeStreaks(habitHistory)
+			if len(habitHistory) > 30 {
+				habitHistory = habitHistory[:30]
+			}
+
+			type WorkoutProfile struct {
+				Sessions []workout.Session      `json:"sessions"`
+				Stats    *workout.Stats         `json:"stats"`
+				Muscles  []workout.MuscleGroup  `json:"muscles"`
+			}
+			type HabitsProfile struct {
+				History []habits.Log       `json:"history"`
+				Streaks map[string]int     `json:"streaks"`
+			}
+			type UserProfile struct {
+				ID      int64          `json:"id"`
+				Email   string         `json:"email"`
+				Name    string         `json:"name"`
+				Workout WorkoutProfile `json:"workout"`
+				Habits  HabitsProfile  `json:"habits"`
+			}
+
+			respond.JSON(w, UserProfile{
+				ID:    user.ID,
+				Email: user.Email,
+				Name:  user.Name,
+				Workout: WorkoutProfile{
+					Sessions: sessions,
+					Stats:    stats,
+					Muscles:  muscles,
+				},
+				Habits: HabitsProfile{
+					History: habitHistory,
+					Streaks: habitStreaks,
+				},
+			})
+		})
 
 		r.Get("/api/day/{date}", func(w http.ResponseWriter, req *http.Request) {
 			userID := auth.UserIDFromCtx(req.Context())

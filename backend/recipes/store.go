@@ -25,13 +25,12 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-func (s *Store) ListRecipes(userID int64) ([]Recipe, error) {
+func (s *Store) ListRecipes(_ int64) ([]Recipe, error) {
 	rows, err := s.db.Query(`
 		SELECT r.id, r.name,
-		       (SELECT MAX(rl.cooked_at)::TEXT FROM recipe_log rl WHERE rl.recipe_id = r.id AND rl.user_id = $1) AS last_cooked
+		       (SELECT MAX(rl.cooked_at)::TEXT FROM recipe_log rl WHERE rl.recipe_id = r.id) AS last_cooked
 		FROM recipes r
-		WHERE r.user_id = $1
-		ORDER BY last_cooked ASC NULLS FIRST, r.created_at ASC`, userID)
+		ORDER BY last_cooked ASC NULLS FIRST, r.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +72,8 @@ func (s *Store) AddRecipe(userID int64, name string) (*Recipe, error) {
 	return r, nil
 }
 
-func (s *Store) DeleteRecipe(userID, id int64) error {
-	_, err := s.db.Exec(`DELETE FROM recipes WHERE id = $1 AND user_id = $2`, id, userID)
+func (s *Store) DeleteRecipe(_ int64, id int64) error {
+	_, err := s.db.Exec(`DELETE FROM recipes WHERE id = $1`, id)
 	return err
 }
 
@@ -167,7 +166,7 @@ func (s *Store) UndoCooking(userID, recipeID int64) error {
 func (s *Store) FindOrCreateRecipe(userID int64, name string) (int64, error) {
 	var id int64
 	err := s.db.QueryRow(
-		`SELECT id FROM recipes WHERE user_id = $1 AND name = $2`, userID, name,
+		`SELECT id FROM recipes WHERE name = $1`, name,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		err = s.db.QueryRow(
@@ -191,12 +190,12 @@ func (s *Store) UpsertIngredient(recipeID, pantryItemID int64, quantity string) 
 	return err
 }
 
-// FindPantryIDByName returns the pantry_items.id for a given user and item name.
+// FindPantryIDByName returns the pantry_items.id for a given item name.
 // Returns 0, nil if not found.
-func (s *Store) FindPantryIDByName(userID int64, name string) (int64, error) {
+func (s *Store) FindPantryIDByName(_ int64, name string) (int64, error) {
 	var id int64
 	err := s.db.QueryRow(
-		`SELECT id FROM pantry_items WHERE user_id = $1 AND name = $2`, userID, name,
+		`SELECT id FROM pantry_items WHERE name = $1`, name,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil

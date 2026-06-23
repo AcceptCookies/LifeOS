@@ -3,6 +3,7 @@ import { api, token } from "./api";
 import AuthPage from "./AuthPage";
 import BugButton from "./BugButton";
 import PantryPage from "./PantryPage";
+import ProfilePage from "./ProfilePage";
 import WorkoutPage from "./WorkoutPage";
 
 // Each habit: key matches backend JSON field, label in Slovak, color for dots/streaks
@@ -83,7 +84,7 @@ const I = ({ d, children, ...props }: IconProps): JSX.Element => (
   </svg>
 );
 
-type TabKey = "habits" | "workout" | "pantry" | "shop" | "recipes";
+type TabKey = "habits" | "workout" | "pantry" | "shop" | "recipes" | "profile";
 
 interface Tab {
   key: TabKey;
@@ -111,6 +112,10 @@ const TABS: Tab[] = [
   {
     key: "recipes", label: "Recepty",
     icon: <I><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></I>,
+  },
+  {
+    key: "profile", label: "Profil",
+    icon: <I><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></I>,
   },
 ];
 
@@ -146,6 +151,8 @@ export default function App(): JSX.Element {
     ? <HabitTracker onLogout={handleLogout} />
     : activePage === "workout"
     ? <WorkoutPage />
+    : activePage === "profile"
+    ? <ProfilePage />
     : <PantryPage activeTab={activePage} onTabChange={setActivePage} />;
 
   return (

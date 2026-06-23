@@ -88,6 +88,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ date, muscle_ids: muscleIds, exercises, notes }),
       }),
+      delete: (id: number): Promise<Response | undefined> => request(`/api/workout/sessions/${id}`, { method: "DELETE" }),
+      move: (id: number, date: string): Promise<Response | undefined> => request(`/api/workout/sessions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ date }),
+      }),
     },
     schedule: {
       get: (): Promise<Response | undefined> => request("/api/workout/schedule"),
@@ -127,9 +132,22 @@ export const api = {
 
   bugs: {
     list: (): Promise<Response | undefined> => request("/api/bugs"),
+    trash: (): Promise<Response | undefined> => request("/api/bugs/trash"),
     create: (text: string): Promise<Response | undefined> => request("/api/bugs", { method: "POST", body: JSON.stringify({ text }) }),
     update: (id: number, patch: { text?: string; status?: string }): Promise<Response | undefined> => request(`/api/bugs/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
     delete: (id: number): Promise<Response | undefined> => request(`/api/bugs/${id}`, { method: "DELETE" }),
+    restore: (id: number): Promise<Response | undefined> => request(`/api/bugs/${id}/restore`, { method: "POST" }),
+    hardDelete: (id: number): Promise<Response | undefined> => request(`/api/bugs/${id}/hard`, { method: "DELETE" }),
+  },
+
+  profile: {
+    get: (): Promise<Response | undefined> => request("/api/profile"),
+    update: (name: string): Promise<Response | undefined> => request("/api/profile", { method: "PUT", body: JSON.stringify({ name }) }),
+  },
+
+  users: {
+    list: (): Promise<Response | undefined> => request("/api/users"),
+    getProfile: (id: number): Promise<Response | undefined> => request(`/api/users/${id}`),
   },
 
   async login(email: string, password: string, persistent = true): Promise<void> {
